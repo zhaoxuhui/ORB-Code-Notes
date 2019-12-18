@@ -178,7 +178,7 @@ protected:
     FrameDrawer* mpFrameDrawer;
     MapDrawer* mpMapDrawer;
 
-    //Map
+    //Map 地图
     Map* mpMap;
 
     //Calibration matrix

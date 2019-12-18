@@ -26,6 +26,8 @@ namespace ORB_SLAM2
 
 std::vector<cv::Mat> Converter::toDescriptorVector(const cv::Mat &Descriptors)
 {
+    // 对一个大矩阵按行进行拆分
+    // 在Frame中描述子是一整个大矩阵，而在KeyFrame中描述子是一个vector，每一个元素对应大矩阵的一行
     std::vector<cv::Mat> vDesc;
     vDesc.reserve(Descriptors.rows);
     for (int j=0;j<Descriptors.rows;j++)

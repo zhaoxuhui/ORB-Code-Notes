@@ -29,7 +29,10 @@ namespace ORB_SLAM2
 long unsigned int KeyFrame::nNextId=0;
 
 KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
-    mnFrameId(F.mnId),  mTimeStamp(F.mTimeStamp), mnGridCols(FRAME_GRID_COLS), mnGridRows(FRAME_GRID_ROWS),
+    // 这里做了非常多的赋值工作，初看起来非常复杂，但稍微仔细研究下发现KeyFrame里的成员变量和Frame的基本是对应的
+    // Frame里面有的KeyFrame里面也有
+    mnFrameId(F.mnId),  mTimeStamp(F.mTimeStamp),
+    mnGridCols(FRAME_GRID_COLS), mnGridRows(FRAME_GRID_ROWS),
     mfGridElementWidthInv(F.mfGridElementWidthInv), mfGridElementHeightInv(F.mfGridElementHeightInv),
     mnTrackReferenceForFrame(0), mnFuseTargetForKF(0), mnBALocalForKF(0), mnBAFixedForKF(0),
     mnLoopQuery(0), mnLoopWords(0), mnRelocQuery(0), mnRelocWords(0), mnBAGlobalForKF(0),
@@ -58,11 +61,18 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
 
 void KeyFrame::ComputeBoW()
 {
+    // 用于计算词袋模型
+
     if(mBowVec.empty() || mFeatVec.empty())
     {
+        // 这里的mDescriptors是在KeyFrame的构造函数里进行初始化的，直接把Frame的mDescriptors复制过来了
+        // 这一行其实只是进行了数据转换，更具体说是矩阵的按行拆分
+        // 因为在Frame里，描述子是用一个大的Mat表示的，每一行表示一个特征点，但在KeyFrame中按行将这个大矩阵进行了拆分
         vector<cv::Mat> vCurrentDesc = Converter::toDescriptorVector(mDescriptors);
+
         // Feature vector associate features with nodes in the 4th level (from leaves up)
         // We assume the vocabulary tree has 6 levels, change the 4 otherwise
+        // 这里就是调用了BoW的相关API，将当前以vector表示的特征描述子转成BoW向量赋给KeyFrame成员变量
         mpORBvocabulary->transform(vCurrentDesc,mBowVec,mFeatVec,4);
     }
 }

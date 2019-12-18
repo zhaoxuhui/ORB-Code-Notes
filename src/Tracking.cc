@@ -624,7 +624,7 @@ void Tracking::MonocularInitialization()
             // 这里的sigma是与内点判断有关的参数
             mpInitializer =  new Initializer(mCurrentFrame,1.0,200);
 
-            // 对与初始匹配成员变量mvIniMatches全部填充-1
+            // 对于初始匹配成员变量mvIniMatches全部填充-1，它是一个int类型的vector
             fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
 
             return;
@@ -647,8 +647,9 @@ void Tracking::MonocularInitialization()
 
         // 如果当前帧关键点个数大于100，开始尝试将当前帧的特征点与初始帧特征点匹配
         // Find correspondences
-        // 新建了个零时变量matcher用于进行匹配
+        // 新建了个临时变量matcher用于进行匹配
         ORBmatcher matcher(0.9,true);
+        // 这里的输入参数是初始帧和当前帧，没什么好说的，但是它的输出需要注意一下mvbPrevMatched、mvIniMatches，它们的赋值就是在这个函数里进行的
         int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
         // Check if there are enough correspondences
@@ -678,12 +679,17 @@ void Tracking::MonocularInitialization()
             }
 
             // Set Frame Poses
+            // 对于初始帧，设置它的姿态为单位帧，平移为0，也就是一个4×4的单位阵
             mInitialFrame.SetPose(cv::Mat::eye(4,4,CV_32F));
+
+            // 而对于当前帧，则设置为刚刚初始化得到的R、t
             cv::Mat Tcw = cv::Mat::eye(4,4,CV_32F);
+            // 构造一个4×4的变换矩阵，将刚刚初始化得到的R、t全部放进去
             Rcw.copyTo(Tcw.rowRange(0,3).colRange(0,3));
             tcw.copyTo(Tcw.rowRange(0,3).col(3));
             mCurrentFrame.SetPose(Tcw);
 
+            // 基于刚刚获得的三角化后的点创建初始地图
             CreateInitialMapMonocular();
         }
     }
@@ -692,20 +698,24 @@ void Tracking::MonocularInitialization()
 void Tracking::CreateInitialMapMonocular()
 {
     // Create KeyFrames
+    // mpMap是Tracking类的成员变量，是一个地图
     KeyFrame* pKFini = new KeyFrame(mInitialFrame,mpMap,mpKeyFrameDB);
     KeyFrame* pKFcur = new KeyFrame(mCurrentFrame,mpMap,mpKeyFrameDB);
 
-
+    // 对初始帧和当前帧中的描述子分别计算BoW
     pKFini->ComputeBoW();
     pKFcur->ComputeBoW();
 
     // Insert KFs in the map
+    // 将初始帧和当前帧分别插入当前地图中
+    // 更细致一点说是把KeyFrame这个对象添加到了mpMap对象的成员变量mspKeyFrames中，它是set类型
     mpMap->AddKeyFrame(pKFini);
     mpMap->AddKeyFrame(pKFcur);
 
     // Create MapPoints and asscoiate to keyframes
     for(size_t i=0; i<mvIniMatches.size();i++)
     {
+        // mvIniMatches存放的是匹配点对的索引，所以不可能小于0，如果小于0，肯定是错了，退出
         if(mvIniMatches[i]<0)
             continue;
 

@@ -108,7 +108,7 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
     }
 
     // Launch threads to compute in parallel a fundamental matrix and a homography
-    vector<bool> vbMatchesInliersH, vbMatchesInliersF;
+    vector<bool> vbMatchesInliersH, vbMatchesInliersF;  // 得分最高的H和F时匹配的内点情况
     float SH, SF;   // H的得分、F的得分
     cv::Mat H, F;   // 单应矩阵、基础矩阵
 
@@ -131,6 +131,11 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
     // 其实到这一步初始化就差不多成功了,剩下的就是根据求出来的变换关系(H或者F)分解得到R,t(当然也包含多种解的过滤),最后用R,t对特征点进行三角化
     if(RH>0.40)
         // 根据单应矩阵H恢复R、t以及三角化特征点
+        // 注意这个函数里的输入输出参数
+        // 首先是vbMatchesInliersH,它是在估计的最好H的情况下,内点的匹配情况(true or false)
+        // 然后传入的是求解的H矩阵以及成员变量mK(相机的内参矩阵),它在Initializer构造函数的第一行就被赋值了
+        // 然后还有最后两个运行参数,对应checkRT函数中的阈值，帧间视差(度)、最少成功三角化的特征点，用于控制三角化点是否可靠
+        // 返回值是分解H得到的R、t、三角化后的三维点，以及哪些三维点是可靠的
         return ReconstructH(vbMatchesInliersH,H,mK,R21,t21,vP3D,vbTriangulated,1.0,50);
     else //if(pF_HF>0.6)
         return ReconstructF(vbMatchesInliersF,F,mK,R21,t21,vP3D,vbTriangulated,1.0,50);
@@ -634,6 +639,11 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
                       cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
 {
     int N=0;
+    // 一个小技巧,如果在for循环里写int,然后循环到vector.size()结束的话,编译时可能会出现类型不一致警告
+    // 因为循环变量是int而size()函数返回的是unsigned int
+    // 所以简单的办法是循环变量不再写成int,而是写成size_t
+    // 这里传入的变量vbMatchesInliers和匹配到的点对个数是一样的
+    // 但这里又进行了一次筛选，只选取了满足单应矩阵H变换的匹配点对
     for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
         if(vbMatchesInliers[i])
             N++;
@@ -646,6 +656,7 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
     cv::Mat invK = K.inv();
     cv::Mat A = invK*H21*K;
 
+    // SVD分解
     cv::Mat U,w,Vt,V;
     cv::SVD::compute(A,w,U,Vt,cv::SVD::FULL_UV);
     V=Vt.t();
@@ -716,6 +727,7 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
     float cphi = (d1*d3-d2*d2)/((d1-d3)*d2);
     float sphi[] = {aux_sphi, -aux_sphi, -aux_sphi, aux_sphi};
 
+    // 分别计算和构造4中情况，分别存放在vR和vt里
     for(int i=0; i<4; i++)
     {
         cv::Mat Rp=cv::Mat::eye(3,3,CV_32F);
@@ -726,7 +738,7 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
         Rp.at<float>(2,2)=-cphi;
 
         cv::Mat R = s*U*Rp*Vt;
-        vR.push_back(R);
+        vR.push_back(R);    //  保存R
 
         cv::Mat tp(3,1,CV_32F);
         tp.at<float>(0)=x1[i];
@@ -735,7 +747,7 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
         tp*=d1+d3;
 
         cv::Mat t = U*tp;
-        vt.push_back(t/cv::norm(t));
+        vt.push_back(t/cv::norm(t));    // 保存t
 
         cv::Mat np(3,1,CV_32F);
         np.at<float>(0)=x1[i];
@@ -764,9 +776,19 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
         float parallaxi;
         vector<cv::Point3f> vP3Di;
         vector<bool> vbTriangulatedi;
-        // 检验R、t是否正确就是在这个函数里进行的
-        int nGood = CheckRT(vR[i],vt[i],mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K,vP3Di, 4.0*mSigma2, vbTriangulatedi, parallaxi);
+        // 检验R、t是否正确就是在这个函数里进行的，传入、传出的参数比较多
+        int nGood = CheckRT(
+                vR[i],vt[i],                   // 传入参数，待验证的R、t
+                mvKeys1,mvKeys2,// 传入参数，两帧上提取的特征点
+                mvMatches12,        // 传入参数，特征点间的匹配关系
+                vbMatchesInliers,           // 传入参数，满足单应矩阵H约束的点对标记
+                K,                             // 传入参数，相机内参矩阵K
+                vP3Di,                      // 传出参数，成功三角化的三维特征点坐标
+                4.0*mSigma2,              // 传出参数，三角化检验时，重投影误差阈值
+                vbTriangulatedi,            // 传出参数，成功三角化的点标记
+                parallaxi);                 // 传出参数，两帧间的视差(角度)
 
+        // 分别记录最多正确三角化点的个数和第二多的个数
         if(nGood>bestGood)
         {
             secondBestGood = bestGood;
@@ -782,7 +804,11 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
         }
     }
 
-    // 如果说第二好的小于0.75倍的最好的或者最好的视差大于最小视差或三角化的个数大于最小三角化个数或者个数大于总数的0.9，就认为OK了
+    // 必须同时满足以下几个条件，才认R、t的分解是对的，并且返回对应状态下的正确三角化的特征点
+    // 1.第二多的正确三角化点数量小于最多三角化点数量的0.75倍
+    // 2.最好的帧间视差大于最小阈值
+    // 3.最多的正确三角化点的个数大于最小个数阈值
+    // 4.最多的正确三角化点的个数大于0.9倍的总数
     if(secondBestGood<0.75*bestGood && bestParallax>=minParallax && bestGood>minTriangulated && bestGood>0.9*N)
     {
         vR[bestSolutionIdx].copyTo(R21);
@@ -798,14 +824,18 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
 
 void Initializer::Triangulate(const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, const cv::Mat &P1, const cv::Mat &P2, cv::Mat &x3D)
 {
+    // 核心算法，需要再理解一下
+
     cv::Mat A(4,4,CV_32F);
 
+    // 构造系数矩阵
     A.row(0) = kp1.pt.x*P1.row(2)-P1.row(0);
     A.row(1) = kp1.pt.y*P1.row(2)-P1.row(1);
     A.row(2) = kp2.pt.x*P2.row(2)-P2.row(0);
     A.row(3) = kp2.pt.y*P2.row(2)-P2.row(1);
 
     cv::Mat u,w,vt;
+    // 三角化算深度也可以看做是一个优化问题，所以构造系数矩阵，用SVD分解求解
     cv::SVD::compute(A,w,u,vt,cv::SVD::MODIFY_A| cv::SVD::FULL_UV);
     x3D = vt.row(3).t();
     x3D = x3D.rowRange(0,3)/x3D.at<float>(3);
@@ -878,22 +908,24 @@ int Initializer::CheckRT(const cv::Mat &R, const cv::Mat &t, const vector<cv::Ke
                        const vector<Match> &vMatches12, vector<bool> &vbMatchesInliers,
                        const cv::Mat &K, vector<cv::Point3f> &vP3D, float th2, vector<bool> &vbGood, float &parallax)
 {
-    // Calibration parameters
+    // Calibration parameters   提取内参
     const float fx = K.at<float>(0,0);
     const float fy = K.at<float>(1,1);
     const float cx = K.at<float>(0,2);
     const float cy = K.at<float>(1,2);
 
     vbGood = vector<bool>(vKeys1.size(),false);
-    vP3D.resize(vKeys1.size());
+    vP3D.resize(vKeys1.size()); // vP3D的大小和vKeys1相同
 
     vector<float> vCosParallax;
     vCosParallax.reserve(vKeys1.size());
 
-    // Camera 1 Projection Matrix K[I|0]
+    // Camera 1 Projection Matrix K[I|0]    构造投影矩阵，将像素坐标转到三维相机坐标
     cv::Mat P1(3,4,CV_32F,cv::Scalar(0));
+    // 将K的内容拷贝到P1的对应部分
     K.copyTo(P1.rowRange(0,3).colRange(0,3));
 
+    // 一个3×1，元素全为0的向量。指的是第一帧相机坐标系原点在第一帧相机坐标系下的坐标
     cv::Mat O1 = cv::Mat::zeros(3,1,CV_32F);
 
     // Camera 2 Projection Matrix K[R|t]
@@ -902,21 +934,28 @@ int Initializer::CheckRT(const cv::Mat &R, const cv::Mat &t, const vector<cv::Ke
     t.copyTo(P2.rowRange(0,3).col(3));
     P2 = K*P2;
 
+    // R的转置(因为R是旋转矩阵，正交，所以转置等于逆)乘以t结果再取负号
+    // 指的是第二帧相机坐标系的原点在第一帧相机坐标系下的坐标
     cv::Mat O2 = -R.t()*t;
 
     int nGood=0;
 
+    // 对于匹配到的点对，依次进行三角化求深度
     for(size_t i=0, iend=vMatches12.size();i<iend;i++)
     {
+        // 只三角化满足单应矩阵H的内点匹配点对，对于其它的直接跳过
         if(!vbMatchesInliers[i])
             continue;
 
+        // 还是之前说的，vMatches12里存放的是匹配点对分别在vKeys1和vKeys2中的索引，所以需要以这种方式获得实际点
         const cv::KeyPoint &kp1 = vKeys1[vMatches12[i].first];
         const cv::KeyPoint &kp2 = vKeys2[vMatches12[i].second];
-        cv::Mat p3dC1;
+        cv::Mat p3dC1;  // 在Camera1坐标系下的3d点坐标
 
+        // 核心计算深度的函数
         Triangulate(kp1,kp2,P1,P2,p3dC1);
 
+        // 如果求解出来的三维坐标中，有任何一维为无穷，认为是错的，三角化失败，将对应项赋为false
         if(!isfinite(p3dC1.at<float>(0)) || !isfinite(p3dC1.at<float>(1)) || !isfinite(p3dC1.at<float>(2)))
         {
             vbGood[vMatches12[i].first]=false;
@@ -924,61 +963,100 @@ int Initializer::CheckRT(const cv::Mat &R, const cv::Mat &t, const vector<cv::Ke
         }
 
         // Check parallax
+        // 得到的是一个从第一帧相机坐标系原点指向p3dC1点的向量
         cv::Mat normal1 = p3dC1 - O1;
+        // 计算向量的L2范数(默认)，可以理解为是该点到第一帧相机坐标系原点的距离或者说模长
+        // 矩阵的L2范数为矩阵的各个元素平方之和再开平方，又被称为F范数(Frobenius Norm)，欧式距离就是一种L2范数。
         float dist1 = cv::norm(normal1);
 
+        // 得到的是一个从第二帧相机坐标系原点指向p3dC1的向量
         cv::Mat normal2 = p3dC1 - O2;
+        // 求解这个向量的L2范数(模长)
         float dist2 = cv::norm(normal2);
 
+        // 求解视差
+        // 其实这个地方用到的是向量点积公式：a·b=|a||b|cos(theta)
+        // 将这个公式变形一下，可以得到cos(theta)=a·b/|a||b|，也就是下面的样子了
+        // 补充一下点乘的几何意义是可以用来表征或计算两个向量之间的夹角，以及在b向量在a向量方向上的投影
+        // 所以这里判断视差其实是通过判断两个向量的夹角的cos值进行的
+        // 具体来说上面首先分别构造了从第一帧相机坐标系原点指向特征点以及从第二帧相机坐标系原点指向特征点这样的两个向量
+        // 然后运用向量点积公式的变形，就可以很容易求得这两个向量之间的夹角余弦
+        // 最后通过对余弦大小的判别进而判断视差的大小
         float cosParallax = normal1.dot(normal2)/(dist1*dist2);
 
+
         // Check depth in front of first camera (only if enough parallax, as "infinite" points can easily go to negative depth)
+        // 结合上面提到的，这里判断条件之一是如果cos的值小于0.99998，就认为不靠谱了
+        // 可以很容易根据反三角函数算出来acos(0.99998)大约为0.361度
+        // 换句话说，如果两帧之间的视差角度小于0.361度就认为这样估计出来的三维点是不可靠的
+        // 而且根据这个指标，也可以由几何关系推算出基线与深度的倍数关系，可以算出来大约是1:156.25
+        // 此外如果按照40倍基线长度计算的话，可以大致算出来视差应该为1.4324度左右
+        // 另一个判断条件是z坐标小于等于0(深度为负)，认为是错的
         if(p3dC1.at<float>(2)<=0 && cosParallax<0.99998)
             continue;
 
         // Check depth in front of second camera (only if enough parallax, as "infinite" points can easily go to negative depth)
         cv::Mat p3dC2 = R*p3dC1+t;
 
+        // 和上一个评价指标一样，如果不满足就认为是错的
         if(p3dC2.at<float>(2)<=0 && cosParallax<0.99998)
             continue;
 
         // Check reprojection error in first image
         float im1x, im1y;
+        // 由于是齐次坐标，所以需要对第三维归一化，先求出归一化因子
         float invZ1 = 1.0/p3dC1.at<float>(2);
+        // 结合归一化因子和相机内参，求得在像平面上的像素坐标
         im1x = fx*p3dC1.at<float>(0)*invZ1+cx;
         im1y = fy*p3dC1.at<float>(1)*invZ1+cy;
 
+        // 误差为dx平方+dy平方
         float squareError1 = (im1x-kp1.pt.x)*(im1x-kp1.pt.x)+(im1y-kp1.pt.y)*(im1y-kp1.pt.y);
 
+        // 如果误差大于给定的阈值th2就认为是错误的
         if(squareError1>th2)
             continue;
 
-        // Check reprojection error in second image
+        // Check reprojection error in second image 又检查一遍
         float im2x, im2y;
         float invZ2 = 1.0/p3dC2.at<float>(2);
         im2x = fx*p3dC2.at<float>(0)*invZ2+cx;
         im2y = fy*p3dC2.at<float>(1)*invZ2+cy;
 
+        // 同理计算投影误差
         float squareError2 = (im2x-kp2.pt.x)*(im2x-kp2.pt.x)+(im2y-kp2.pt.y)*(im2y-kp2.pt.y);
-
+        // 如果误差大于阈值直接丢弃
         if(squareError2>th2)
             continue;
 
+        // 如果点对通过了以上的检验，就把它对应的视差储存起来
         vCosParallax.push_back(cosParallax);
+        // 注意这里三维深度点赋值方法
+        // vMatches12里存储的是匹配点对在各自影像特征点vector中的索引
+        // 所以这里直接获取到对应特征点的索引
+        // 由于vP3D和vKeys1是一样的，所以索引通用，直接赋值
         vP3D[vMatches12[i].first] = cv::Point3f(p3dC1.at<float>(0),p3dC1.at<float>(1),p3dC1.at<float>(2));
-        nGood++;
+        nGood++;    // 好的三角化点数加一
 
+        // 同时，再设置对应标签为true
         if(cosParallax<0.99998)
             vbGood[vMatches12[i].first]=true;
     }
+    // 这样循环一遍之后，就可以得到当前R、t条件下的三角化点以及好的三角化点的个数
 
+    // 如果说好的三角化点的数量大于1，就进行下面步骤
     if(nGood>0)
     {
+        // 在上面的循环中，把每一个成功三角化了的点的对应的视差放到了vCosParallax里
+        // 这里对这些视差从小到大排个序
         sort(vCosParallax.begin(),vCosParallax.end());
 
+        // 如果可靠点的个数小于50，就选最大的索引；如果大于50，都选50
         size_t idx = min(50,int(vCosParallax.size()-1));
+        // 由于保存的是cos，所以用反三角函数求解出角度，再将其转换成度
         parallax = acos(vCosParallax[idx])*180/CV_PI;
     }
+    // 否则的化视差设为0度
     else
         parallax=0;
 

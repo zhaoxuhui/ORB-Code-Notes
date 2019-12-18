@@ -276,15 +276,19 @@ namespace ORB_SLAM2 {
     }
 
     void Frame::SetPose(cv::Mat Tcw) {
+        // 将参数传入的变换矩阵T赋给成员变量mTcw，比较简单
         mTcw = Tcw.clone();
+        // 更新一下成员变量，因为这里是直接对变换矩阵赋值了，并没有修改R、t
         UpdatePoseMatrices();
     }
 
     void Frame::UpdatePoseMatrices() {
+        // 和SetPose函数配合使用，用于基于传入的变换矩阵T更新对应的成员变量R、t
+        // 矩阵的块操作，取变换矩阵的前3×3作为旋转矩阵赋给成员变量mRcw
         mRcw = mTcw.rowRange(0, 3).colRange(0, 3);
-        mRwc = mRcw.t();
-        mtcw = mTcw.rowRange(0, 3).col(3);
-        mOw = -mRcw.t() * mtcw;
+        mRwc = mRcw.t();    // 由于是旋转矩阵，所以转置等于逆
+        mtcw = mTcw.rowRange(0, 3).col(3);  // 同理，将平移t拆分出来
+        mOw = -mRcw.t() * mtcw; // 注意这里的逆平移，还需要乘以-mRcw.t()
     }
 
     bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit) {

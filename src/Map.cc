@@ -32,7 +32,11 @@ Map::Map():mnMaxKFid(0),mnBigChangeIdx(0)
 void Map::AddKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexMap);
+    // 将参数输入的关键帧插入到Map类的成员变量mspKeyFrames中，这是一个set
     mspKeyFrames.insert(pKF);
+    // 进行了数值比较，并把较大的赋给mnMaxKFid
+    // KeyFrame的mnId是来自于在构造函数中的赋值，是直接由Frame的mnId赋值过来的
+    // 而Frame的mnId是在Frame的构造函数中累加得到的
     if(pKF->mnId>mnMaxKFid)
         mnMaxKFid=pKF->mnId;
 }
