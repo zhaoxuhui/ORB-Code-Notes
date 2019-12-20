@@ -720,17 +720,29 @@ void Tracking::CreateInitialMapMonocular()
             continue;
 
         //Create MapPoint.
+        // 这个地方的mvIniP3D就是前面初始化函数中利用三角化得到的三维点
+        // 这里得到的只是一个Mat类型的矩阵
         cv::Mat worldPos(mvIniP3D[i]);
 
+        // 通过MapPoint的构造函数创建了MapPoint类型的指针，传入三个参数
+        // worldPos，新建的Mat类型的矩阵，里面存放的是根据三角化解算出来的三维点坐标（初始帧相机坐标系下）
+        // pKFcur，上面根据当前帧的Frame对象新建出来KeyFrame对象
+        // mpMap，Tracking类的成员变量，是Map类的对象，这个参数决定了地图点要添加到哪个Map中
         MapPoint* pMP = new MapPoint(worldPos,pKFcur,mpMap);
 
+        // 向关键帧中添加特征点
+        // 这里将我们刚刚新建的MapPoint对象指针以及对应索引
         pKFini->AddMapPoint(pMP,i);
         pKFcur->AddMapPoint(pMP,mvIniMatches[i]);
 
+        // 对地图点增加观测，个人理解所谓观测就是指某个三维地图点在某一帧中所对应的二维像素坐标
+        // 函数需要传入两个参数，一个是该地图点被观测到的关键帧，一个是该地图点在该关键帧特征点中的索引
         pMP->AddObservation(pKFini,i);
         pMP->AddObservation(pKFcur,mvIniMatches[i]);
 
+        // 根据多个关键帧中的描述子计算最具代表性的描述子
         pMP->ComputeDistinctiveDescriptors();
+        // 更新深度信息
         pMP->UpdateNormalAndDepth();
 
         //Fill Current Frame structure

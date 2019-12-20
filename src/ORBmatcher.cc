@@ -406,11 +406,12 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
 {
     int nmatches=0;
     // 初始化vnMatches12长度为F1中特征点的个数，数值全为-1
+    // 所谓匹配其实本质上说就是vector之间的索引关系，所以这里vnMatches12存放的是索引，所以类型为int
     vnMatches12 = vector<int>(F1.mvKeysUn.size(),-1);
 
     // 建立一个长度为HISTO_LENGTH的数组，数组的每个元素都是一个int类型的vector
     vector<int> rotHist[HISTO_LENGTH];
-    // 每一个vector都预留500个元素的长度
+    // 每一个vector都预留500个元素的长度（但此时vector的长度还是为0的，只是预留了这么长的内存空间）
     for(int i=0;i<HISTO_LENGTH;i++)
         rotHist[i].reserve(500);
     const float factor = 1.0f/HISTO_LENGTH;
@@ -1663,6 +1664,10 @@ void ORBmatcher::ComputeThreeMaxima(vector<int>* histo, const int L, int &ind1, 
 // http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
 int ORBmatcher::DescriptorDistance(const cv::Mat &a, const cv::Mat &b)
 {
+    // 这里用来计算描述子距离的方法不是最朴素的位运算，而是另一种经过优化的更快的算法
+    // 如果不理解下面的代码也没太大关系，只要知道它最后会返回两个描述子之间的距离就OK了
+    // 感兴趣可以去上面的网址上看更多内容
+
     const int *pa = a.ptr<int32_t>();
     const int *pb = b.ptr<int32_t>();
 

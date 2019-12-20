@@ -219,6 +219,8 @@ int KeyFrame::GetWeight(KeyFrame *pKF)
 
 void KeyFrame::AddMapPoint(MapPoint *pMP, const size_t &idx)
 {
+    // 其实这个函数做的事情非常简单，一个是加了个线程同步锁，防止冲突
+    // 然后就是将我们传入的MapPoint指针赋给了KeyFrame的成员变量mvpMapPoints的对应位置
     unique_lock<mutex> lock(mMutexFeatures);
     mvpMapPoints[idx]=pMP;
 }
