@@ -396,41 +396,59 @@ bool MapPoint::IsInKeyFrame(KeyFrame *pKF)
 
 void MapPoint::UpdateNormalAndDepth()
 {
+    // 还是之前说的，一个observation是一个KeyFrame类+这个地图点在KeyFrame中对应特征点的索引
     map<KeyFrame*,size_t> observations;
     KeyFrame* pRefKF;
     cv::Mat Pos;
+    // 线程同步锁
     {
         unique_lock<mutex> lock1(mMutexFeatures);
         unique_lock<mutex> lock2(mMutexPos);
         if(mbBad)
             return;
+        // 如果一切OK的话就进行一些赋值操作
         observations=mObservations;
         pRefKF=mpRefKF;
         Pos = mWorldPos.clone();
     }
 
+    // 如果观测为空，该地图点在这些观测中一次都没有出现，则直接返回
     if(observations.empty())
         return;
 
+    // normal是一个3×1的全为0的向量
     cv::Mat normal = cv::Mat::zeros(3,1,CV_32F);
     int n=0;
+    // 在可与观测到这个地图点的所有关键帧中迭代
     for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
     {
+        // mit的第一个部分是关键帧KeyFrame
         KeyFrame* pKF = mit->first;
+        // 获取这个关键帧的相机中心，是一个Mat类型的对象
         cv::Mat Owi = pKF->GetCameraCenter();
+        // MapPoint世界坐标系下的坐标减去某个关键帧相机坐标系原点在世界坐标系下的坐标
         cv::Mat normali = mWorldPos - Owi;
+        // 累加，归一化向量，为什么这样做有待研究
         normal = normal + normali/cv::norm(normali);
         n++;
     }
 
+    // 世界坐标系坐标-参考帧相机中心的坐标
     cv::Mat PC = Pos - pRefKF->GetCameraCenter();
+    // 对PC这个向量求范数，默认是L2范数，也就是欧氏距离
     const float dist = cv::norm(PC);
+    // observations是一个map，我们根据KeyFrame可以找到它所对应的特征点索引
+    // 在获得了索引之后，这些特征点都是保存在KeyFrame的成员变量mvKeysUn里的，所以直接用这个索引就可以获得想要的特征点
+    // 这个特征点又有成员变量octave，表示它是在金字塔的第几层提取出来的
     const int level = pRefKF->mvKeysUn[observations[pRefKF]].octave;
+    // 获得了该特征点对应的金字塔层数后，就可以进一步获得该层对应的尺度因子
     const float levelScaleFactor =  pRefKF->mvScaleFactors[level];
     const int nLevels = pRefKF->mnScaleLevels;
 
     {
         unique_lock<mutex> lock3(mMutexPos);
+        // 将距离(长度)乘以刚刚获得从尺度因子，就可以得到距离
+        // 关于这两个参数的意义还有待进一步理解
         mfMaxDistance = dist*levelScaleFactor;
         mfMinDistance = mfMaxDistance/pRefKF->mvScaleFactors[nLevels-1];
         mNormalVector = normal/n;

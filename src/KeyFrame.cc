@@ -107,7 +107,9 @@ cv::Mat KeyFrame::GetPoseInverse()
 
 cv::Mat KeyFrame::GetCameraCenter()
 {
+    // 线程锁
     unique_lock<mutex> lock(mMutexPose);
+    // 一切OK的情况下，返回相机中心的坐标
     return Ow.clone();
 }
 
