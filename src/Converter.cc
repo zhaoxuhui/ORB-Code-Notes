@@ -38,19 +38,26 @@ std::vector<cv::Mat> Converter::toDescriptorVector(const cv::Mat &Descriptors)
 
 g2o::SE3Quat Converter::toSE3Quat(const cv::Mat &cvT)
 {
+    // 这个函数用于将传入的OpenCV的Mat类型的4×4的矩阵(特殊欧式群SE3)转成g2o中的SE3Quat类型，便于使用
+    // 首先新建了一个矩阵R用于存放旋转部分
     Eigen::Matrix<double,3,3> R;
+    // 依次获取传入的变换矩阵cvT中的旋转部分
     R << cvT.at<float>(0,0), cvT.at<float>(0,1), cvT.at<float>(0,2),
          cvT.at<float>(1,0), cvT.at<float>(1,1), cvT.at<float>(1,2),
          cvT.at<float>(2,0), cvT.at<float>(2,1), cvT.at<float>(2,2);
 
+    // 再建一个3×1的向量，并将对应平移部分传入
     Eigen::Matrix<double,3,1> t(cvT.at<float>(0,3), cvT.at<float>(1,3), cvT.at<float>(2,3));
 
+    // 最后根据R、t构建g2o的SE3Quat对象并返回
     return g2o::SE3Quat(R,t);
 }
 
 cv::Mat Converter::toCvMat(const g2o::SE3Quat &SE3)
 {
+    // 直接调用g2o的SE3的成员函数to_homogeneous_matrix就将数据转换成了Eigen的Matrix格式
     Eigen::Matrix<double,4,4> eigMat = SE3.to_homogeneous_matrix();
+    // 然后再将Eigen的Matrix转换成OpenCV的Mat
     return toCvMat(eigMat);
 }
 
@@ -64,7 +71,9 @@ cv::Mat Converter::toCvMat(const g2o::Sim3 &Sim3)
 
 cv::Mat Converter::toCvMat(const Eigen::Matrix<double,4,4> &m)
 {
+    // 手动新建了一个4×4的Mat用于接收数据
     cv::Mat cvMat(4,4,CV_32F);
+    // 依次遍历，进行元素赋值
     for(int i=0;i<4;i++)
         for(int j=0; j<4; j++)
             cvMat.at<float>(i,j)=m(i,j);
@@ -84,6 +93,7 @@ cv::Mat Converter::toCvMat(const Eigen::Matrix3d &m)
 
 cv::Mat Converter::toCvMat(const Eigen::Matrix<double,3,1> &m)
 {
+    // 针对不同大小的Eigen Matrix，作者重载了多个toCvMat函数
     cv::Mat cvMat(3,1,CV_32F);
     for(int i=0;i<3;i++)
             cvMat.at<float>(i)=m(i);
@@ -111,7 +121,8 @@ cv::Mat Converter::toCvSE3(const Eigen::Matrix<double,3,3> &R, const Eigen::Matr
 
 Eigen::Matrix<double,3,1> Converter::toVector3d(const cv::Mat &cvVector)
 {
-    Eigen::Matrix<double,3,1> v;
+    // 将OpenCV的Mat表示的坐标转换成Eigen的Matrix表示的坐标
+    Eigen::Matrix<double,3,1> v;    // 对应x、y、z
     v << cvVector.at<float>(0), cvVector.at<float>(1), cvVector.at<float>(2);
 
     return v;

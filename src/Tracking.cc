@@ -713,6 +713,7 @@ void Tracking::CreateInitialMapMonocular()
     mpMap->AddKeyFrame(pKFcur);
 
     // Create MapPoints and asscoiate to keyframes
+    // 对于每一对匹配点都逐次创建地图点并插入地图
     for(size_t i=0; i<mvIniMatches.size();i++)
     {
         // mvIniMatches存放的是匹配点对的索引，所以不可能小于0，如果小于0，肯定是错了，退出
@@ -749,20 +750,21 @@ void Tracking::CreateInitialMapMonocular()
         mCurrentFrame.mvpMapPoints[mvIniMatches[i]] = pMP;
         mCurrentFrame.mvbOutlier[mvIniMatches[i]] = false;
 
-        //Add to Map
+        //Add to Map    将地图点添加到地图中
         mpMap->AddMapPoint(pMP);
     }
 
-    // Update Connections
+    // Update Connections   对初始帧和当前帧更新连接
     pKFini->UpdateConnections();
     pKFcur->UpdateConnections();
 
     // Bundle Adjustment
     cout << "New Map created with " << mpMap->MapPointsInMap() << " points" << endl;
 
+    // 对地图点、关联的关键帧以及观测进行全局的光束法平差
     Optimizer::GlobalBundleAdjustemnt(mpMap,20);
 
-    // Set median depth to 1
+    // Set median depth to 1 设置中位数深度为1
     float medianDepth = pKFini->ComputeSceneMedianDepth(2);
     float invMedianDepth = 1.0f/medianDepth;
 

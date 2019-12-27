@@ -222,7 +222,9 @@ namespace ORB_SLAM2 {
         // 对提取的特征点坐标按照校正参数校正
         UndistortKeyPoints();
 
-        // Set no stereo information
+        // Set no stereo information 对于非双目的情形设置信息
+        // 注意，这两个变量只对双目立体的情形有用，对于单目没用，所有的值全部为-1！！
+        // 这个很重要，在后面会用到
         mvuRight = vector<float>(N, -1);
         mvDepth = vector<float>(N, -1);
 

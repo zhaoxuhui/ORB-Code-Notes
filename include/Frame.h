@@ -140,6 +140,8 @@ public:
 
     // Corresponding stereo coordinate and depth for each keypoint.
     // "Monocular" keypoints have a negative value.
+    // 这两个vector是用于双目情形的，表示每个点双目坐标系和深度
+    // 对于单目的特征点，值为负
     std::vector<float> mvuRight;
     std::vector<float> mvDepth;
 

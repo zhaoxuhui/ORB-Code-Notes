@@ -80,7 +80,9 @@ void KeyFrame::ComputeBoW()
 void KeyFrame::SetPose(const cv::Mat &Tcw_)
 {
     unique_lock<mutex> lock(mMutexPose);
+    // 将新的位姿拷贝到成员变量Tcw
     Tcw_.copyTo(Tcw);
+    // 基于新的变换矩阵计算R、t
     cv::Mat Rcw = Tcw.rowRange(0,3).colRange(0,3);
     cv::Mat tcw = Tcw.rowRange(0,3).col(3);
     cv::Mat Rwc = Rcw.t();
@@ -96,6 +98,8 @@ void KeyFrame::SetPose(const cv::Mat &Tcw_)
 cv::Mat KeyFrame::GetPose()
 {
     unique_lock<mutex> lock(mMutexPose);
+    // 返回的是一个Mat类型的矩阵，表示关键帧当前的位姿
+    // 这个变换矩阵其实是一个4×4的、由R、t构成的特殊欧氏群SE3
     return Tcw.clone();
 }
 
@@ -135,10 +139,15 @@ cv::Mat KeyFrame::GetTranslation()
 void KeyFrame::AddConnection(KeyFrame *pKF, const int &weight)
 {
     {
+        // 线程锁
         unique_lock<mutex> lock(mMutexConnections);
+        // mConnectedKeyFrameWeights是KeyFrame的map型成员变量，存放的是关键帧以及对应观测次数
+        // 这里利用map类的count函数进行了统计，统计某个关键帧的对应观测次数
         if(!mConnectedKeyFrameWeights.count(pKF))
+            // 如果当前map中还没有pKF的权重，就把传入的weight赋给它
             mConnectedKeyFrameWeights[pKF]=weight;
         else if(mConnectedKeyFrameWeights[pKF]!=weight)
+            // 如果说当前map中已经有了权重值且不等于传入的weight，就把传入的权重值赋过来
             mConnectedKeyFrameWeights[pKF]=weight;
         else
             return;
@@ -307,28 +316,42 @@ void KeyFrame::UpdateConnections()
     vector<MapPoint*> vpMP;
 
     {
+        // 线程锁
         unique_lock<mutex> lockMPs(mMutexFeatures);
+        // 将vector成员变量mvpMapPoints赋给临时变量，这个vector里存放的是当前关键帧所对应的地图点
+        // 在Tracking的CreateInitialMapMonocular函数中调用了KeyFrame的成员函数AddMapPoint将地图点添加到了mvpMapPoints中
         vpMP = mvpMapPoints;
     }
 
     //For all map points in keyframe check in which other keyframes are they seen
+    // 简单来说就是对于当前帧中的地图点，依次遍历看看某个点是否在其它关键帧中也被看到了
+    // 这样可以统计获得每个地图点除了当前关键帧，被观测到的次数
     //Increase counter for those keyframes
     for(vector<MapPoint*>::iterator vit=vpMP.begin(), vend=vpMP.end(); vit!=vend; vit++)
     {
+        // 将迭代器变量指针赋给pMP
         MapPoint* pMP = *vit;
 
+        // 如果为空跳过本次循环
         if(!pMP)
             continue;
 
+        // 如果地图点是坏的，跳过本次循环
+        // 至于说什么是坏的，在isBad函数中调用了两个线程锁，并没有完全理解
         if(pMP->isBad())
             continue;
 
+        // 获取这个地图点的观测，也就是之前关联的关键帧
         map<KeyFrame*,size_t> observations = pMP->GetObservations();
 
         for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
         {
+            // 如果关键帧ID和本关键帧相同，就不累加了，跳过，对于其它的累加
             if(mit->first->mnId==mnId)
                 continue;
+            // 这里需要注意累加的方式
+            // KFcounter是一个map，mit也是一个map型的迭代变量，mit->first获取到的是对应的KeyFrame指针
+            // 这里将KeyFrame指针作为索引，或者说“键”，去查找对应的int类型的数（值），找到后对其进行累加
             KFcounter[mit->first]++;
         }
     }
@@ -341,33 +364,41 @@ void KeyFrame::UpdateConnections()
     //In case no keyframe counter is over threshold add the one with maximum counter
     int nmax=0;
     KeyFrame* pKFmax=NULL;
-    int th = 15;
+    int th = 15;    // 观测次数阈值设置为15，如果观测次数大于15则增加连接
 
     vector<pair<int,KeyFrame*> > vPairs;
     vPairs.reserve(KFcounter.size());
     for(map<KeyFrame*,int>::iterator mit=KFcounter.begin(), mend=KFcounter.end(); mit!=mend; mit++)
     {
+        // 这个if语句其实是在寻找观测次数最多的那个关键帧
         if(mit->second>nmax)
         {
             nmax=mit->second;
             pKFmax=mit->first;
         }
+
+        // 这个if语句是在判断某个关键帧的观测次数是否大于阈值，是的话就添加
         if(mit->second>=th)
         {
             vPairs.push_back(make_pair(mit->second,mit->first));
+            // 添加连接，传入两个参数，KeyFrame指针和观测次数
             (mit->first)->AddConnection(this,mit->second);
         }
     }
 
+    // 如果说假如遍历了一圈之后发现没有一个是超过观测阈值的，vPairs还为空
+    // 那么刚刚统计的最大观测次数和对应的关键帧就派上用场了，将它们放到vPairs里面
     if(vPairs.empty())
     {
         vPairs.push_back(make_pair(nmax,pKFmax));
         pKFmax->AddConnection(this,nmax);
     }
 
+    // 对vPairs进行排序，默认为升序
     sort(vPairs.begin(),vPairs.end());
     list<KeyFrame*> lKFs;
     list<int> lWs;
+    // 依次遍历获取vPairs中的关键帧和观测次数，分别放到两个list中
     for(size_t i=0; i<vPairs.size();i++)
     {
         lKFs.push_front(vPairs[i].second);
@@ -375,12 +406,13 @@ void KeyFrame::UpdateConnections()
     }
 
     {
+        // 线程锁
         unique_lock<mutex> lockCon(mMutexConnections);
 
         // mspConnectedKeyFrames = spConnectedKeyFrames;
-        mConnectedKeyFrameWeights = KFcounter;
-        mvpOrderedConnectedKeyFrames = vector<KeyFrame*>(lKFs.begin(),lKFs.end());
-        mvOrderedWeights = vector<int>(lWs.begin(), lWs.end());
+        mConnectedKeyFrameWeights = KFcounter;  //  将临时变量KFcounter赋给成员变量
+        mvpOrderedConnectedKeyFrames = vector<KeyFrame*>(lKFs.begin(),lKFs.end());  // 根据刚刚遍历得到的关键帧list生成vector赋给成员变量
+        mvOrderedWeights = vector<int>(lWs.begin(), lWs.end()); // 同理，成员变量赋值
 
         if(mbFirstConnection && mnId!=0)
         {
@@ -560,6 +592,7 @@ void KeyFrame::SetBadFlag()
 
 bool KeyFrame::isBad()
 {
+    // 这是一个线程锁，所以这个函数的理解就是如果这个线程锁成功了，说明是好的，否则说明是坏的
     unique_lock<mutex> lock(mMutexConnections);
     return mbBad;
 }
@@ -623,6 +656,7 @@ vector<size_t> KeyFrame::GetFeaturesInArea(const float &x, const float &y, const
 
 bool KeyFrame::IsInImage(const float &x, const float &y) const
 {
+    // 传入一个像素坐标，判断该点是否在影像中，其实非常简单粗暴，就是范围判断
     return (x>=mnMinX && x<mnMaxX && y>=mnMinY && y<mnMaxY);
 }
 

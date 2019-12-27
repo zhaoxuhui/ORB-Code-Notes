@@ -40,8 +40,12 @@ namespace ORB_SLAM2
 
 void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
 {
+    // Optimizer的全局BA函数，传入的参数是建立的地图和迭代次数
+    // 首先调用Map类的成员函数GetAllKeyFrames返回与当前Map有关联的所有关键帧
     vector<KeyFrame*> vpKFs = pMap->GetAllKeyFrames();
+    // 然后调用GetAllMapPoints函数返回当前地图中的所有关键点
     vector<MapPoint*> vpMP = pMap->GetAllMapPoints();
+    // 调用BA函数准备优化，未指定的参数在声明中都有默认值
     BundleAdjustment(vpKFs,vpMP,nIterations,pbStopFlag, nLoopKF, bRobust);
 }
 
@@ -49,105 +53,190 @@ void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopF
 void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<MapPoint *> &vpMP,
                                  int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
 {
+    // 实现BA的核心函数！！
+
     vector<bool> vbNotIncludedMP;
     vbNotIncludedMP.resize(vpMP.size());
 
+    // 调用的是g2o的优化API，g2o使用的固定格式
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;
 
     linearSolver = new g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>();
 
     g2o::BlockSolver_6_3 * solver_ptr = new g2o::BlockSolver_6_3(linearSolver);
-
+    // 设置优化算法是Levenberg
     g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
     optimizer.setAlgorithm(solver);
 
+    // 是否设置强制停止标记，默认为NULL
     if(pbStopFlag)
         optimizer.setForceStopFlag(pbStopFlag);
 
     long unsigned int maxKFid = 0;
 
-    // Set KeyFrame vertices
+    // Set KeyFrame vertices 向优化图中增加顶点，这里的顶点就是与当前地图相关联的关键帧
     for(size_t i=0; i<vpKFs.size(); i++)
     {
+        // 依次获取关键帧对象
         KeyFrame* pKF = vpKFs[i];
+        // 判断这个关键帧是否是坏的，如果是坏的就跳过当前关键帧
         if(pKF->isBad())
             continue;
+        // 新建出来一个SE3指数映射的一个对象指针vSE3，它其实可以理解为关键帧的位姿，对应一个三维欧式变换矩阵T
+        // SE3中文叫做特殊欧氏群，是一个由R、t组成的4×4的矩阵
         g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
+        // 将我们当前的估计值传入节点
+        // 这里调用了一个将SE3转换成四元素和t的函数
+        // 首先通过关键帧成员函数GetPose获取了以Mat表示的当前位姿，
+        // 然后调用Converter中的函数，将Mat转换成g2o中的SE3Quat对象，包含R、t
         vSE3->setEstimate(Converter::toSE3Quat(pKF->GetPose()));
+        // 将当前关键帧ID也赋给节点
         vSE3->setId(pKF->mnId);
+        // 该节点是否固定，如果固定，则在优化中就不会调整它的姿态，反之就会调整
+        // 这里的做法是只对ID等于0的关键帧(初始帧)设置为固定，对于其它所有帧都不固定，优化时都可以改变位置
         vSE3->setFixed(pKF->mnId==0);
+        // 最后一步，向优化器中添加节点
         optimizer.addVertex(vSE3);
+        // 如果关键帧的ID大于目前的最大ID，就进行替换
         if(pKF->mnId>maxKFid)
             maxKFid=pKF->mnId;
     }
 
+    // 设置了两个阈值，分别针对后面单目和双目两种不同情况 2D-单目 3D-双目
     const float thHuber2D = sqrt(5.99);
     const float thHuber3D = sqrt(7.815);
 
-    // Set MapPoint vertices
+    // Set MapPoint vertices    向优化图中添加地图点节点和对应边
+    // 下面的代码是两个非常长的for循环的嵌套
+    // 简单来说就是从地图点的角度，外层循环遍历每个地图点
+    // 对于每个地图点，由于可能有多个对应的观测(关键帧)，所以内层再用一个循环遍历每个关键帧
+    // 这样就可以将与某个地图点相关联的所有边添加到优化图中了
+    // 重复外层循环，就可以将所有点的所有关联边添加到优化图中了
     for(size_t i=0; i<vpMP.size(); i++)
     {
+        // 首先，遍历获取vector中的每一个地图点
         MapPoint* pMP = vpMP[i];
+        // 如果地图点是坏的，本次循环结束，不添加这个地图点进优化图
         if(pMP->isBad())
             continue;
+        // 这里也是新建了节点用于存放数据，需要注意的是这里的节点类型和上面的是不一样的
+        // 上面的节点存放的是位姿信息，所以节点类型是VertexSE3Expmap
+        // 而这里的节点存放的就是地图点的XYZ坐标，所以类型是VertexSBAPointXYZ
         g2o::VertexSBAPointXYZ* vPoint = new g2o::VertexSBAPointXYZ();
+        // 新建好对象指针后，还是老套路，调用它的成员函数setEstimate来设置当前我们计算的数据
+        // 首先调用MapPoint的成员函数GetWorldPos获取坐标，返回的是3×1的Mat类型的数据
+        // 然后调用Converter的转换函数，将其转换成Eigen的Matrix类型
         vPoint->setEstimate(Converter::toVector3d(pMP->GetWorldPos()));
+        // 计算该地图点的ID，计算公式是当前地图点的ID加上关键帧的最大ID再加1
+        // 这样做的原因是避免和前面关键帧的ID重复，关键帧ID先排完，然后是地图点
         const int id = pMP->mnId+maxKFid+1;
-        vPoint->setId(id);
+        vPoint->setId(id);  // 设置ID
+        // 设置是否边缘化，对于这个函数，文档解释是set this node should be marginalized out during the optimization
+        // 在优化时，该节点是否被边缘化
         vPoint->setMarginalized(true);
-        optimizer.addVertex(vPoint);
+        optimizer.addVertex(vPoint);    // 最后一步，添加地图点到优化图中
 
-       const map<KeyFrame*,size_t> observations = pMP->GetObservations();
+        // 上面经过了两大步骤，分别向优化图中添加了关键帧节点和地图点节点
+        // 所以下面理所应当地应该添加各个节点之间的关系了
+        // 这种关系就是之前代码中提到的“观测”，这种观测信息存放在地图点中，从地图点的角度描述的：某个地图点能被哪几个关键帧观测到
+
+        // 首先获取当前地图点的观测
+        // 关键帧作为键(key)，值(value)是该地图点在该关键帧特征点列表中的索引
+        const map<KeyFrame*,size_t> observations = pMP->GetObservations();
 
         int nEdges = 0;
-        //SET EDGES
+        //SET EDGES 依次遍历每个地图点，对每个地图点的观测添加边
         for(map<KeyFrame*,size_t>::const_iterator mit=observations.begin(); mit!=observations.end(); mit++)
         {
-
+            // 首先获取该地图点对应的关键帧
             KeyFrame* pKF = mit->first;
+            // 如果这个关键帧是坏的或者索引超过了最大索引，就跳过这个关键帧，不添加了
             if(pKF->isBad() || pKF->mnId>maxKFid)
                 continue;
 
+            // 否则边的个数先加1
             nEdges++;
 
+            // 根据上面说的，在这里定义的观测是一个键值对，键为关键帧，值为这个地图点在这个关键帧特征点列表中的索引
+            // 所以，这里先获取到了这个地图点在关键帧中的索引，然后通过索引获取到这个关键帧成员变量mvKeysUn对应的元素
+            // 这个对象就是在关键帧中的二维特征点
             const cv::KeyPoint &kpUn = pKF->mvKeysUn[mit->second];
 
+            // 这里针对不同情况进行了一个判断，即mvuRight中对应位置的元素值是否小于0
+            // 它最一开始是在Frame.cc的228行赋值的，关键帧KeyFrame中的mvuRight是在构造函数中直接拷贝的对应Frame的mvuRight(KeyFrame.cc,41行)
+            // 它主要是针对双目的情况，对于单目情况，它的所有元素都为-1(Frame.c,228行)
+            // 所以明白了这点以后，这里其实是根据mvuRight的值，对单目和双目两种情况进行了判断
+            // 因为在MapPoint.cc的127行也说了，双目的话一次相当于有两个关键帧观测，单目的话只有一个
             if(pKF->mvuRight[mit->second]<0)
             {
+                // 单目情况
+
+                // 获得关键帧中的像素坐标
                 Eigen::Matrix<double,2,1> obs;
                 obs << kpUn.pt.x, kpUn.pt.y;
 
+                // 新建一个边，这个边的类型是EdgeSE3ProjectXYZ
                 g2o::EdgeSE3ProjectXYZ* e = new g2o::EdgeSE3ProjectXYZ();
 
+                // 既然是边，就需要连接两个节点，所以这里分别设置边的两个端点，这里边的指向是从地图点到关键帧的
+                // 上面在添加节点的时候都是调用optimizer的成员函数addVertex，所以获取节点还是使用optimizer
+                // 这里的id就是上面128行计算得到的ID，地图点
                 e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(id)));
+                // 对于每一个与当前地图点相关联的关键帧，获取它的ID，以此为索引确定边的另一端
                 e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKF->mnId)));
+                // obs是我们获取的当前地图点在关键帧上投影得到的像素坐标，作为观测添加到边中
                 e->setMeasurement(obs);
+                // 这里获取了关键帧中该点所在金字塔层数对应的InvLevelSigma2的值
+                // 关键帧中的mvInvLevelSigma2是由Frame直接拷贝过来的(KeyFrame.cc,line 44)
+                // 而Frame中的mvInvLevelSigma2又是由Frame的ORBextractor指针类型的成员变量mpORBextractorLeft的成员函数GetInverseScaleSigmaSquares获得的(Frame.cc,line 76)
+                // mpORBextractorLeft是由Frame的构造函数的传入参数extractorLeft获得的(Frame.cc,line 62)
+                // 进一步，成员函数GetInverseScaleSigmaSquares返回的值是ORBextractor的成员变量mvInvLevelSigma2(ORBextractor.h,line 84)
+                // ORBextractor的成员变量mvInvLevelSigma2是在其构造函数里初始化和计算的(ORBextractor.cc,line 440,445)
+                // 进一步，每一层的mvInvLevelSigma2等于每一层mvLevelSigma2的倒数(ORBextractor.cc,line 445)
+                // 每一层mvLevelSigma2等于每一层mvScaleFactor的平方(ORBextractor.cc,line 434)
+                // 而每一层的mvScaleFactor等于上一层的mvScaleFactor乘以配置文件里指定的scaleFactor(ORBextractor.cc,line 433)
                 const float &invSigma2 = pKF->mvInvLevelSigma2[kpUn.octave];
+                // 设置边的信息矩阵，等于协方差矩阵之逆
                 e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
 
+                // 是否需要鲁棒，这是函数传入的参数之一，默认为true，如果不需要鲁棒就不会执行下面的代码
                 if(bRobust)
                 {
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
+                    // specify the robust kernel to be used in this edge
                     e->setRobustKernel(rk);
+                    // 将刚刚上面107行设置的数值传进来
                     rk->setDelta(thHuber2D);
                 }
 
+                // 再将关键帧所对应的相机内参传给边，以便于计算
+                // 和上面的参数传递路径类似，关键帧KeyFrame的fx参数拷贝于Frame的fx(KeyFrame.cc,line 39)，而Frame的fx由构造函数传入的参数K指定(Frame.cc,line 241)
                 e->fx = pKF->fx;
                 e->fy = pKF->fy;
                 e->cx = pKF->cx;
                 e->cy = pKF->cy;
 
+                // 最后，终于到了最后一步，将构造好的边添加到优化器中，太辛苦了
                 optimizer.addEdge(e);
             }
             else
             {
+                // 双目情况
+                // 在看完了单目的添加边后，双目基本是一样的
+
                 Eigen::Matrix<double,3,1> obs;
+                // 上面说了，在单目时mvuRight所有元素都为-1，但双目就不是了，而是算出来的一个值
+                // 具体计算在Frame.cc的631、615行
+                // 由于现在主要学习的是单目，所以双目的内容暂时就不看了，以后有时间可以看
                 const float kp_ur = pKF->mvuRight[mit->second];
+                // 所以双目的观测除了关键帧上的x、y坐标，还有个ur
                 obs << kpUn.pt.x, kpUn.pt.y, kp_ur;
 
+                // 注意这里的边的类型是EdgeStereoSE3ProjectXYZ
                 g2o::EdgeStereoSE3ProjectXYZ* e = new g2o::EdgeStereoSE3ProjectXYZ();
 
+                // 这里设置两个顶点、观测、信息矩阵的步骤和单目是一样的
                 e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(id)));
                 e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKF->mnId)));
                 e->setMeasurement(obs);
@@ -155,23 +244,30 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                 Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
                 e->setInformation(Info);
 
+                // 边是否需要鲁棒，默认是true
                 if(bRobust)
                 {
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
+                    // 这里就用到了上面设置的第二个参数
                     rk->setDelta(thHuber3D);
                 }
 
+                // 将关键帧的一些内参传给边
                 e->fx = pKF->fx;
                 e->fy = pKF->fy;
                 e->cx = pKF->cx;
                 e->cy = pKF->cy;
                 e->bf = pKF->mbf;
 
+                // 最后，向优化器中添加边
                 optimizer.addEdge(e);
             }
         }
 
+        // 如果说对于某个地图点而言，添加的边为0，也就是说没有关键帧观测到该地图点
+        // 那么就把这个地图点从优化器中删除
+        // 并且把不包含在地图中的这个flag设为true，否则为false
         if(nEdges==0)
         {
             optimizer.removeVertex(vPoint);
@@ -183,52 +279,80 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
         }
     }
 
-    // Optimize!
+    // 上面说了、写了这么多，核心的操作就是向优化图中添加节点和边
+    // 首先利用一个for循环将与地图有关联的所有关键帧添加为节点
+    // 然后又用一个外层for循环将所有地图点添加到优化图中作为节点
+    // 最后利用一个嵌套的for循环实现了关键帧节点与地图节点之间边的建立
+    // 构成了一个优化图(太不容易了...)
+
+    // Optimize! 最后一步，优化！！！经过这么复杂的过程，终于要有结果到了，作者都忍不住加个感叹号！
     optimizer.initializeOptimization();
-    optimizer.optimize(nIterations);
+    optimizer.optimize(nIterations);    // 这里的迭代次数就是函数传入的参数，默认为5，但在调用的时候(Tracking.cc,line 764)设置的为20
 
-    // Recover optimized data
+    // Recover optimized data 恢复优化后的数据
+    // 优化完成后总要把结果输出来用吧，下面的代码就是做这些事的
 
-    //Keyframes
+    //Keyframes 遍历关键帧
     for(size_t i=0; i<vpKFs.size(); i++)
     {
+        // 获取关键帧
         KeyFrame* pKF = vpKFs[i];
+        // 如果关键帧是坏的，直接跳过
         if(pKF->isBad())
             continue;
+        // 根据关键帧所对应的索引获取优化后的关键帧节点
         g2o::VertexSE3Expmap* vSE3 = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(pKF->mnId));
+        // 获取当前更新优化后的关键帧位姿，return the current estimate of the vertex
+        // 这和上面的setEstimate对应，那个是设置优化前的值到节点上，这个是从节点返回优化后的值
         g2o::SE3Quat SE3quat = vSE3->estimate();
+        // 如果nLoopKF等于0执行下面代码，nLoopKF默认为0
         if(nLoopKF==0)
         {
+            // 这里是和上面对应的，调用toCvMat函数将SE3Quat表示的位姿转换成OpenCV的mat格式
+            // 最后将Mat格式的位姿重新赋给关键帧
             pKF->SetPose(Converter::toCvMat(SE3quat));
         }
         else
         {
+            // 如果nLoopKF不为0，执行下面代码
             pKF->mTcwGBA.create(4,4,CV_32F);
+            // 调用Mat的成员函数直接将内容拷贝给mTcwGBA
             Converter::toCvMat(SE3quat).copyTo(pKF->mTcwGBA);
             pKF->mnBAGlobalForKF = nLoopKF;
         }
     }
 
-    //Points
+    //Points 遍历每个地图点，更新为优化后的数据
     for(size_t i=0; i<vpMP.size(); i++)
     {
+        // 如果说它没算在优化变量里，直接跳过，也就是说和原来一样，没有改变
         if(vbNotIncludedMP[i])
             continue;
 
+        // 获取地图点
         MapPoint* pMP = vpMP[i];
 
+        // 如果这个地图点是坏的，也是直接跳过
         if(pMP->isBad())
             continue;
+
+        // 与前面类似，根据地图点的ID获取到更新优化后的节点
         g2o::VertexSBAPointXYZ* vPoint = static_cast<g2o::VertexSBAPointXYZ*>(optimizer.vertex(pMP->mnId+maxKFid+1));
 
+        // 如果nLoopKF==0执行下面代码，nLoopKF默认为0
         if(nLoopKF==0)
         {
+            // 从更新后的节点中利用estimate函数读取数据，并将其转换成Mat格式
+            // 然后调用MapPoint的成员函数SetWorldPos将更新后的结果重新赋值
             pMP->SetWorldPos(Converter::toCvMat(vPoint->estimate()));
+            // 对地图点坐标进行重新赋值后更新一下深度
             pMP->UpdateNormalAndDepth();
         }
         else
         {
+            // 如果nLoopKF不为0，执行下面代码
             pMP->mPosGBA.create(3,1,CV_32F);
+            // 调用Mat的成员函数直接将内容拷贝给mPosGBA
             Converter::toCvMat(vPoint->estimate()).copyTo(pMP->mPosGBA);
             pMP->mnBAGlobalForKF = nLoopKF;
         }

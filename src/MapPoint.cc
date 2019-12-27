@@ -81,14 +81,17 @@ MapPoint::MapPoint(const cv::Mat &Pos, Map* pMap, Frame* pFrame, const int &idxF
 
 void MapPoint::SetWorldPos(const cv::Mat &Pos)
 {
+    // 线程锁
     unique_lock<mutex> lock2(mGlobalMutex);
     unique_lock<mutex> lock(mMutexPos);
+    // 相比于关键帧的赋值，地图点的赋值会简单很多，直接将传入的数值拷贝给成员变量mWorldPos即可
     Pos.copyTo(mWorldPos);
 }
 
 cv::Mat MapPoint::GetWorldPos()
 {
     unique_lock<mutex> lock(mMutexPos);
+    // 返回当前地图点在世界坐标系下的坐标，它是以Mat类型存储的，大小为3×1，对应x、y、z
     return mWorldPos.clone();
 }
 
@@ -117,8 +120,12 @@ void MapPoint::AddObservation(KeyFrame* pKF, size_t idx)
     // 关键帧作为键(key)，值(value)是该地图点在该关键帧特征点列表中的索引
     mObservations[pKF]=idx;
 
-    // mvuRight暂时还没理解代表什么含义，它是一个vector，元素是float，注释说是negative value of monocular points
+    // mvuRight它是一个vector，元素是float，注释说是negative value of monocular points
+    // 它是针对双目立体的情形使用的，对于单目情况mvuRight里面的值全为-1
+    // 它最一开始是在Frame.cc的228行赋值的，关键帧KeyFrame中的mvuRight是在构造函数中直接拷贝的对应Frame的mvuRight
     // 这行代码的意思是如果它的值大于0，观测个数加2，否则加1
+    // 结合它的定义就可以理解了：对于双目情况，一次有左右两个观测，所以观测次数+2，
+    // 对于单目情况，在一开始赋值的时候全部为-1，所以这里观测次数+1
     if(pKF->mvuRight[idx]>=0)
         nObs+=2;
     else
@@ -156,6 +163,7 @@ void MapPoint::EraseObservation(KeyFrame* pKF)
 map<KeyFrame*, size_t> MapPoint::GetObservations()
 {
     unique_lock<mutex> lock(mMutexFeatures);
+    // 简单粗暴，直接返回地图点的成员变量mObservations
     return mObservations;
 }
 
@@ -233,6 +241,7 @@ void MapPoint::Replace(MapPoint* pMP)
 
 bool MapPoint::isBad()
 {
+    // 和之前的理解类似，如果这两个线程锁都OK了，则是好的，否则是坏的
     unique_lock<mutex> lock(mMutexFeatures);
     unique_lock<mutex> lock2(mMutexPos);
     return mbBad;

@@ -148,7 +148,7 @@ public:
     int mnRelocWords;
     float mRelocScore;
 
-    // Variables used by loop closing
+    // Variables used by loop closing 回环检测使用的变量
     cv::Mat mTcwGBA;
     cv::Mat mTcwBefGBA;
     long unsigned int mnBAGlobalForKF;
