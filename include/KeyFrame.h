@@ -193,9 +193,9 @@ public:
 protected:
 
     // SE3 Pose and camera center
-    cv::Mat Tcw;
-    cv::Mat Twc;
-    cv::Mat Ow;
+    cv::Mat Tcw;    // Tcw是从camera到world
+    cv::Mat Twc;    // Twc是从world到camera
+    cv::Mat Ow; // 相机中心在世界坐标系下的坐标
 
     cv::Mat Cw; // Stereo middel point. Only for visualization
 

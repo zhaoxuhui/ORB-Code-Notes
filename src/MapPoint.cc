@@ -169,7 +169,9 @@ map<KeyFrame*, size_t> MapPoint::GetObservations()
 
 int MapPoint::Observations()
 {
+    // 线程独占锁
     unique_lock<mutex> lock(mMutexFeatures);
+    // 返回该地图点对应的观测个数
     return nObs;
 }
 

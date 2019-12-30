@@ -173,7 +173,7 @@ protected:
     // System
     System* mpSystem;
     
-    //Drawers
+    //Drawers   与可视化相关的变量
     Viewer* mpViewer;
     FrameDrawer* mpFrameDrawer;
     MapDrawer* mpMapDrawer;

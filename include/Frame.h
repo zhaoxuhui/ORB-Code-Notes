@@ -164,7 +164,7 @@ public:
     std::vector<std::size_t> mGrid[FRAME_GRID_COLS][FRAME_GRID_ROWS];
 
     // Camera pose.
-    cv::Mat mTcw;
+    cv::Mat mTcw;   // 从camera到world
 
     // Current and Next Frame id.
     static long unsigned int nNextId;

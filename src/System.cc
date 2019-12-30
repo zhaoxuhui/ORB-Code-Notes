@@ -265,7 +265,9 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp)
     // 这个函数也是单目Tracking的核心，它的返回值是一个变换矩阵
     cv::Mat Tcw = mpTracker->GrabImageMonocular(im,timestamp);
 
+    // 线程独占锁
     unique_lock<mutex> lock2(mMutexState);
+    // 将Tracking的一些成员变量赋给System
     mTrackingState = mpTracker->mState;
     mTrackedMapPoints = mpTracker->mCurrentFrame.mvpMapPoints;
     mTrackedKeyPointsUn = mpTracker->mCurrentFrame.mvKeysUn;
@@ -306,6 +308,8 @@ void System::Reset()
 
 void System::Shutdown()
 {
+    // 结束整个SLAM系统
+
     mpLocalMapper->RequestFinish();
     mpLoopCloser->RequestFinish();
     if(mpViewer)
@@ -327,7 +331,10 @@ void System::Shutdown()
 
 void System::SaveTrajectoryTUM(const string &filename)
 {
+    // 其实这个函数和SaveKeyFrameTrajectoryTUM功能类似，只是一个保存关键帧，一个保存所有帧
+
     cout << endl << "Saving camera trajectory to " << filename << " ..." << endl;
+    // 不过需要注意的是，如果是单目的情况，无法保存所有帧的轨迹
     if(mSensor==MONOCULAR)
     {
         cerr << "ERROR: SaveTrajectoryTUM cannot be used for monocular." << endl;
@@ -390,34 +397,48 @@ void System::SaveKeyFrameTrajectoryTUM(const string &filename)
 {
     cout << endl << "Saving keyframe trajectory to " << filename << " ..." << endl;
 
+    // 从Map中获取所有关键帧
     vector<KeyFrame*> vpKFs = mpMap->GetAllKeyFrames();
+    // 再简单按照关键帧的ID排个序
     sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);
 
     // Transform all keyframes so that the first keyframe is at the origin.
     // After a loop closure the first keyframe might not be at the origin.
     //cv::Mat Two = vpKFs[0]->GetPoseInverse();
 
+    // 构造输出流并打开文件
     ofstream f;
     f.open(filename.c_str());
+    // 输出的数字有时候是用科学计数法表示的，并不容易辨识
+    // 所以给文件流f设置fixed属性，即禁止使用科学计数法表示浮点数
     f << fixed;
 
+    // 依次循环关键帧输出
     for(size_t i=0; i<vpKFs.size(); i++)
     {
+        // 获取关键帧对象
         KeyFrame* pKF = vpKFs[i];
 
-       // pKF->SetPose(pKF->GetPose()*Two);
+        // pKF->SetPose(pKF->GetPose()*Two);
 
+        // 如果关键帧是坏的，没办法，只好跳过本次循环了
         if(pKF->isBad())
             continue;
 
+        // 利用成员函数获取旋转，注意GetRotation直接返回的是camera到world的旋转，
+        // 对其转置相当于求逆，就变成了world到camera的旋转了
         cv::Mat R = pKF->GetRotation().t();
+        // 得到旋转矩阵还不算完，一般保存文件不会以旋转矩阵保存，所以可以将其转换成四元数
+        // 一定要注意toQuaternion函数输出的四元数顺序是x、y、z、w
         vector<float> q = Converter::toQuaternion(R);
         cv::Mat t = pKF->GetCameraCenter();
-        f << setprecision(6) << pKF->mTimeStamp << setprecision(7) << " " << t.at<float>(0) << " " << t.at<float>(1) << " " << t.at<float>(2)
-          << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;
-
+        // 最后依次输出每个关键帧的时间戳、x、y、z、qx、qy、qz、qw
+        f << setprecision(6) << pKF->mTimeStamp << setprecision(7) << " "
+        << t.at<float>(0) << " " << t.at<float>(1) << " "<< t.at<float>(2) << " "
+        << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;
     }
 
+    // 输出流用完之后记得关闭，不然文件内容可能是空的
     f.close();
     cout << endl << "trajectory saved!" << endl;
 }

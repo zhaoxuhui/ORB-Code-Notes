@@ -130,6 +130,8 @@ Eigen::Matrix<double,3,1> Converter::toVector3d(const cv::Mat &cvVector)
 
 Eigen::Matrix<double,3,1> Converter::toVector3d(const cv::Point3f &cvPoint)
 {
+    // 将OpenCV的Point3f类型转换成3×1的Eigen的Matrix
+
     Eigen::Matrix<double,3,1> v;
     v << cvPoint.x, cvPoint.y, cvPoint.z;
 
@@ -138,6 +140,8 @@ Eigen::Matrix<double,3,1> Converter::toVector3d(const cv::Point3f &cvPoint)
 
 Eigen::Matrix<double,3,3> Converter::toMatrix3d(const cv::Mat &cvMat3)
 {
+    // 简单粗暴地将OpenCV的Mat转换成Eigen的Matrix3d，对应元素直接赋值即可
+
     Eigen::Matrix<double,3,3> M;
 
     M << cvMat3.at<float>(0,0), cvMat3.at<float>(0,1), cvMat3.at<float>(0,2),
@@ -149,9 +153,13 @@ Eigen::Matrix<double,3,3> Converter::toMatrix3d(const cv::Mat &cvMat3)
 
 std::vector<float> Converter::toQuaternion(const cv::Mat &M)
 {
+    // 函数功能非常简单粗暴，将输入的旋转矩阵转换成对应的四元数表示
+    // 具体说来，首先第一步，利用函数toMatrix3d将OpenCV的Mat转换成了Eigen的Matrix3d
     Eigen::Matrix<double,3,3> eigMat = toMatrix3d(M);
+    // 然后得到旋转矩阵后，直接用Eigen的API，将旋转矩阵转换成了四元数q
     Eigen::Quaterniond q(eigMat);
 
+    // 最后为了使用方便，将其变成vector的形式，一定要注意四元数的顺序是x、y、z、w
     std::vector<float> v(4);
     v[0] = q.x();
     v[1] = q.y();

@@ -123,12 +123,15 @@ long unsigned int Map::GetMaxKFid()
 
 void Map::clear()
 {
+    // 删除所有地图点
     for(set<MapPoint*>::iterator sit=mspMapPoints.begin(), send=mspMapPoints.end(); sit!=send; sit++)
         delete *sit;
 
+    // 删除所有关键帧
     for(set<KeyFrame*>::iterator sit=mspKeyFrames.begin(), send=mspKeyFrames.end(); sit!=send; sit++)
         delete *sit;
 
+    // 调用set和vector类型的成员函数clear清空内容
     mspMapPoints.clear();
     mspKeyFrames.clear();
     mnMaxKFid = 0;

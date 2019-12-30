@@ -85,13 +85,18 @@ void KeyFrame::SetPose(const cv::Mat &Tcw_)
     // 基于新的变换矩阵计算R、t
     cv::Mat Rcw = Tcw.rowRange(0,3).colRange(0,3);
     cv::Mat tcw = Tcw.rowRange(0,3).col(3);
-    cv::Mat Rwc = Rcw.t();
-    Ow = -Rwc*tcw;
+    cv::Mat Rwc = Rcw.t();  // 由于旋转矩阵是正交阵，转置等于逆，所以这里这样写了
+    Ow = -Rwc*tcw;  // 计算逆变换过程对应的平移部分，其实对应的也就是相机中心在世界坐标系下的坐标
 
+    // 计算world到camera的变换矩阵
     Twc = cv::Mat::eye(4,4,Tcw.type());
+    // 先将上面转置得到的代表逆旋转的旋转矩阵对应赋值赋过来
     Rwc.copyTo(Twc.rowRange(0,3).colRange(0,3));
+    // 将上面计算好的平移部分直接赋值
     Ow.copyTo(Twc.rowRange(0,3).col(3));
+    // 计算center
     cv::Mat center = (cv::Mat_<float>(4,1) << mHalfBaseline, 0 , 0, 1);
+    // 计算Cw
     Cw = Twc*center;
 }
 
@@ -105,7 +110,9 @@ cv::Mat KeyFrame::GetPose()
 
 cv::Mat KeyFrame::GetPoseInverse()
 {
+    // 线程独占锁
     unique_lock<mutex> lock(mMutexPose);
+    // 返回从world到camera的变换矩阵Twc，和GetPose函数正好相反
     return Twc.clone();
 }
 
@@ -126,7 +133,9 @@ cv::Mat KeyFrame::GetStereoCenter()
 
 cv::Mat KeyFrame::GetRotation()
 {
+    // 线程独占锁
     unique_lock<mutex> lock(mMutexPose);
+    // 说是返回旋转，其实就是返回了变换矩阵的前三行、前三列，注意是camera到world的变换
     return Tcw.rowRange(0,3).colRange(0,3).clone();
 }
 
@@ -272,19 +281,29 @@ set<MapPoint*> KeyFrame::GetMapPoints()
 
 int KeyFrame::TrackedMapPoints(const int &minObs)
 {
+    // 线程独占锁
     unique_lock<mutex> lock(mMutexFeatures);
 
     int nPoints=0;
+    // 最小观测数大于0？如果是为true，否则为false，这里传入的为1，所以为true
     const bool bCheckObs = minObs>0;
+    // 对于关键帧中的所有特征点
     for(int i=0; i<N; i++)
     {
+        // 根据索引获取对应的地图点
         MapPoint* pMP = mvpMapPoints[i];
+        // 如果对应地图点存在
         if(pMP)
         {
+            // 且该地图点也不是坏的
             if(!pMP->isBad())
             {
+                // 是否检查地图点观测数量，如果传入的参数minObs大于0的话就检查
                 if(bCheckObs)
                 {
+                    // 这一行的意思是假如关键帧上的某个特征点对应的地图的点存在且不是坏的
+                    // 进一步判断这个地图点的观测数量是否大于给定的阈值
+                    // 如果大于阈值，认为是ok的，数量加1，否则不加
                     if(mvpMapPoints[i]->Observations()>=minObs)
                         nPoints++;
                 }
@@ -293,19 +312,23 @@ int KeyFrame::TrackedMapPoints(const int &minObs)
             }
         }
     }
-
+    // 最后，返回符合条件的地图点数量
     return nPoints;
 }
 
 vector<MapPoint*> KeyFrame::GetMapPointMatches()
 {
+    // 线程独占锁
     unique_lock<mutex> lock(mMutexFeatures);
+    // 返回关键帧中对应的地图点vector
     return mvpMapPoints;
 }
 
 MapPoint* KeyFrame::GetMapPoint(const size_t &idx)
 {
+    // 线程独占锁
     unique_lock<mutex> lock(mMutexFeatures);
+    // 返回对应的地图点
     return mvpMapPoints[idx];
 }
 
@@ -683,30 +706,42 @@ float KeyFrame::ComputeSceneMedianDepth(const int q)
     vector<MapPoint*> vpMapPoints;
     cv::Mat Tcw_;
     {
+        // 线程锁
         unique_lock<mutex> lock(mMutexFeatures);
         unique_lock<mutex> lock2(mMutexPose);
         vpMapPoints = mvpMapPoints;
         Tcw_ = Tcw.clone();
     }
 
+    // 新建一个vector用于存放算出来的每个特征点的深度
     vector<float> vDepths;
+    // N是KeyFrame的成员变量，表示当前KeyFrame中的特征点个数
     vDepths.reserve(N);
+    // ???
     cv::Mat Rcw2 = Tcw_.row(2).colRange(0,3);
-    Rcw2 = Rcw2.t();
-    float zcw = Tcw_.at<float>(2,3);
+    Rcw2 = Rcw2.t();    // 转置
+    float zcw = Tcw_.at<float>(2,3);    // T矩阵的最后一列的第三行，也就是平移的z分量
+    // 对N个特征点，每个特征点都遍历计算深度
     for(int i=0; i<N; i++)
     {
+        // 前面提到并不是买个特征点都有深度，所以这里判断一下
         if(mvpMapPoints[i])
         {
+            // 计算特征点深度
             MapPoint* pMP = mvpMapPoints[i];
             cv::Mat x3Dw = pMP->GetWorldPos();
+            // 这里其实只对z分量进行了计算
             float z = Rcw2.dot(x3Dw)+zcw;
+            // 将计算好的z分量放到vector中
             vDepths.push_back(z);
         }
     }
 
+    // 对计算出的深度从小到大排序
     sort(vDepths.begin(),vDepths.end());
 
+    // 返回中位数对应的深度，所有个数除以2，就是中间的那个数
+    // 作者在这里对2做了参数化，也可以取其它值，那含义就变成了占总数1/q的元素
     return vDepths[(vDepths.size()-1)/q];
 }
 
