@@ -28,6 +28,7 @@
 namespace ORB_SLAM2
 {
 
+    // 进行了一个类型的定义，方便后续使用
 typedef DBoW2::TemplatedVocabulary<DBoW2::FORB::TDescriptor, DBoW2::FORB>
   ORBVocabulary;
 

@@ -414,8 +414,12 @@ namespace ORB_SLAM2 {
 
 
     void Frame::ComputeBoW() {
+        // 如果词袋向量为空开始计算
         if (mBowVec.empty()) {
+            // 将一个大的Mat描述矩阵按行拆分成一个个的描述，以vector形式返回
             vector<cv::Mat> vCurrentDesc = Converter::toDescriptorVector(mDescriptors);
+            // 将vector形式的特征向量转换成ORB字典，这里的transform是DBoW的API，无需进一步深究
+            // 返回值是mBowVec和mFeatVec
             mpORBvocabulary->transform(vCurrentDesc, mBowVec, mFeatVec, 4);
         }
     }

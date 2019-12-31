@@ -300,11 +300,13 @@ namespace ORB_SLAM2 {
             if (mState != OK)
                 return;
         } else {
-            // System is initialized. Track Frame.
+            // System is initialized. Track Frame.  如果系统已经初始化了，开始跟踪图像帧
             bool bOK;
 
             // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
+            // 使用运动模型或重定位(如果跟丢的话)获得初始相机位姿估计
             if (!mbOnlyTracking) {
+                // 既tracking又mapping
                 // Local Mapping is activated. This is the normal behaviour, unless
                 // you explicitly activate the "only tracking" mode.
 
@@ -312,6 +314,7 @@ namespace ORB_SLAM2 {
                     // Local Mapping might have changed some MapPoints tracked in last frame
                     CheckReplacedInLastFrame();
 
+                    // 如果速度为0或者当前帧ID和上一个重定位帧ID相差小于2
                     if (mVelocity.empty() || mCurrentFrame.mnId < mnLastRelocFrameId + 2) {
                         bOK = TrackReferenceKeyFrame();
                     } else {
@@ -778,41 +781,56 @@ namespace ORB_SLAM2 {
 
 
     bool Tracking::TrackReferenceKeyFrame() {
-        // Compute Bag of Words vector
+        // Compute Bag of Words vector 计算词袋向量
         mCurrentFrame.ComputeBoW();
 
         // We perform first an ORB matching with the reference keyframe
         // If enough matches are found we setup a PnP solver
+        // 我们首先和参考关键帧进行一次ORB匹配，如果有足够多的匹配点，就建立PnP求解
         ORBmatcher matcher(0.7, true);
         vector<MapPoint *> vpMapPointMatches;
 
+        // 传入参数为参考关键帧和当前关键帧，返回的是匹配地图点，函数返回值是匹配点对个数
         int nmatches = matcher.SearchByBoW(mpReferenceKF, mCurrentFrame, vpMapPointMatches);
 
+        // 如果说两个关键帧匹配点对个数小于15，直接返回false
         if (nmatches < 15)
             return false;
 
+        // 设置当前帧的地图点为刚刚匹配得到的点
         mCurrentFrame.mvpMapPoints = vpMapPointMatches;
+        // 设置位姿
         mCurrentFrame.SetPose(mLastFrame.mTcw);
 
+        // 优化位姿，传入的参数只有Frame类型的当前帧
+        // 注意这里地图点是固定的，只优化位姿，通过不断调整帧的位姿使得误差最小
+        // 当执行完这行代码后mCurrentFrame的mTcw就已经是优化后的了
+        // 同时Frame的mvbOutlier也已经被修改了，所以后面才会直接用
         Optimizer::PoseOptimization(&mCurrentFrame);
 
         // Discard outliers
         int nmatchesMap = 0;
+        // 对于当前帧中的所有特征点进行遍历
         for (int i = 0; i < mCurrentFrame.N; i++) {
+            // 如果这个特征点对应的地图点存在的话，执行下面代码
             if (mCurrentFrame.mvpMapPoints[i]) {
+                // 如果这个地图点对应的外点标记是true的话就执行下面代码将它删掉
                 if (mCurrentFrame.mvbOutlier[i]) {
+                    // 先获取到地图点对象
                     MapPoint *pMP = mCurrentFrame.mvpMapPoints[i];
-
+                    // 再把列表中的指针清空
                     mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint *>(NULL);
                     mCurrentFrame.mvbOutlier[i] = false;
                     pMP->mbTrackInView = false;
                     pMP->mnLastFrameSeen = mCurrentFrame.mnId;
                     nmatches--;
                 } else if (mCurrentFrame.mvpMapPoints[i]->Observations() > 0)
+                    // 如果地图点不是外点，而且它所对应的观测个数大于0的话，就累加
                     nmatchesMap++;
             }
         }
 
+        // 如果好的地图点个数大于10，返回true，否则false
         return nmatchesMap >= 10;
     }
 

@@ -111,6 +111,7 @@ public:
     list<bool> mlbLost;
 
     // True if local mapping is deactivated and we are performing only localization
+    // 这个flag的用途是决定系统是不是只tracking不mapping，如果只需要tracking的话，设为true，否则为false
     bool mbOnlyTracking;
 
     void Reset();
