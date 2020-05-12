@@ -48,12 +48,14 @@ int main(int argc, char **argv)
     vector<double> vTimeStamp;
     LoadImages(string(argv[3]), string(argv[4]), string(argv[5]), vstrImageLeft, vstrImageRight, vTimeStamp);
 
+    // 如果没有影像，则弹出错误提示
     if(vstrImageLeft.empty() || vstrImageRight.empty())
     {
         cerr << "ERROR: No images in provided path." << endl;
         return 1;
     }
 
+    // 如果左右影像数量不同，弹出错误提示
     if(vstrImageLeft.size()!=vstrImageRight.size())
     {
         cerr << "ERROR: Different number of left and right images." << endl;
@@ -86,6 +88,7 @@ int main(int argc, char **argv)
     int rows_r = fsSettings["RIGHT.height"];
     int cols_r = fsSettings["RIGHT.width"];
 
+    // K、P、R、D参数必须都有，缺少任意一个都会提示错误
     if(K_l.empty() || K_r.empty() || P_l.empty() || P_r.empty() || R_l.empty() || R_r.empty() || D_l.empty() || D_r.empty() ||
             rows_l==0 || rows_r==0 || cols_l==0 || cols_r==0)
     {
@@ -199,6 +202,8 @@ void LoadImages(const string &strPathLeft, const string &strPathRight, const str
     vstrImageRight.reserve(5000);
     while(!fTimes.eof())
     {
+        // 根据这里的代码就可以推测出它所需要的时间戳文件每一行应该是图片拍摄的时间，除此之外没有其它内容了
+        // 所以数据集中给出的csv文件需要重新处理一下才能使用
         string s;
         getline(fTimes,s);
         if(!s.empty())

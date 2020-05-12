@@ -18,11 +18,14 @@
 * along with ORB-SLAM2. If not, see <http://www.gnu.org/licenses/>.
 */
 
+// 防卫式声明
 #ifndef ORBEXTRACTOR_H
 #define ORBEXTRACTOR_H
 
+// 两个基本的STL头文件
 #include <vector>
 #include <list>
+// OpenCV的核心函数头文件
 #include <opencv/cv.h>
 
 
@@ -32,13 +35,22 @@ namespace ORB_SLAM2
 class ExtractorNode
 {
 public:
+    // 构造函数，因为太简单所以就写成这种形式了
+    // 只做了一件事情，就是将成员变量bNoMore设为了false
+    // 后面也说到了bNoMore用于说明当前节点是否可以继续分割
     ExtractorNode():bNoMore(false){}
 
+    // 拆分当前节点为4个子节点
     void DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNode &n3, ExtractorNode &n4);
 
+    // vector，用于存放当前节点里的特征点
     std::vector<cv::KeyPoint> vKeys;
+    // 节点的四个坐标，左上、右上、左下、右下
     cv::Point2i UL, UR, BL, BR;
+    // ExtractorNode的迭代器，用于在list中迭代元素
     std::list<ExtractorNode>::iterator lit;
+    // bNoMore，用于指明当前节点是否还可以继续分割，默认是false
+    // 也就是说默认是可以继续分割的，若为true则不能再分
     bool bNoMore;
 };
 
@@ -46,17 +58,25 @@ class ORBextractor
 {
 public:
     
+    // 枚举类型变量
     enum {HARRIS_SCORE=0, FAST_SCORE=1 };
 
+    // ORBextractor的构造函数
     ORBextractor(int nfeatures, float scaleFactor, int nlevels,
                  int iniThFAST, int minThFAST);
 
+    // 析构函数
     ~ORBextractor(){}
 
     // Compute the ORB features and descriptors on an image.
     // ORB are dispersed on the image using an octree.
     // Mask is ignored in the current implementation.
     // 重载了括号运算符，方便直接调用
+    // 这样新建了一个对象后就可以像调用函数一样调用它了
+    // 这也是对外执行ORB特征提取的唯一接口
+    // 例如:
+    // ORB_SLAM2::ORBextractor orb = ORB_SLAM2::ORBextractor(1000, 1.2, 8, 20, 10);
+    // orb(img_gray, cv::Mat(), keypoints, descriptors);
     void operator()( cv::InputArray image, cv::InputArray mask,
       std::vector<cv::KeyPoint>& keypoints,
       cv::OutputArray descriptors);
@@ -65,9 +85,11 @@ public:
     int inline GetLevels(){
         return nlevels;}
 
+    // 返回尺度因子
     float inline GetScaleFactor(){
         return scaleFactor;}
 
+    // 返回尺度因子列表
     std::vector<float> inline GetScaleFactors(){
         return mvScaleFactor;
     }
@@ -97,16 +119,23 @@ protected:
     void ComputeKeyPointsOld(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
     std::vector<cv::Point> pattern;
 
+    // 特征提取相关参数
+    // 它们都是protected的，也就是说外部函数无法直接访问
+    // 特征提取数量，这里需要理解的是由于有多层金字塔，
+    // 因此这里的特征点数量指的是所有层特征加一起的总数，并不是初始层的特征点个数
+    // 初始层的特征点个数可以根据等比数列求和公式算出来，是小于这个数值的
     int nfeatures;
-    double scaleFactor;
-    int nlevels;
-    int iniThFAST;
-    int minThFAST;
+    double scaleFactor; // 金字塔的尺度缩放因子
+    int nlevels;    // 金字塔层数
+    int iniThFAST;  // 初始FAST阈值
+    int minThFAST;  // 最小FAST阈值
 
+    // 用于存储每一层的特征点个数
     std::vector<int> mnFeaturesPerLevel;
 
     std::vector<int> umax;
 
+    // 多个vector，用于储存每层的尺度因子和逆尺度相关信息
     std::vector<float> mvScaleFactor;
     std::vector<float> mvInvScaleFactor;    
     std::vector<float> mvLevelSigma2;

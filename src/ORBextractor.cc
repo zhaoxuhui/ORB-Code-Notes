@@ -54,10 +54,12 @@
 */
 
 
+// OpenCV相关头文件
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/features2d/features2d.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
+// 标准STL的vector头文件
 #include <vector>
 
 #include "ORBextractor.h"
@@ -69,15 +71,18 @@ using namespace std;
 namespace ORB_SLAM2
 {
 
+// 预先定义好的一些参数常量
 const int PATCH_SIZE = 31;
 const int HALF_PATCH_SIZE = 15;
-const int EDGE_THRESHOLD = 19;
+const int EDGE_THRESHOLD = 19;  // 影像扩边的时候用到
 
 
 static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 {
-    int m_01 = 0, m_10 = 0;
+    int m_01 = 0, m_10 = 0; // 它们对应公式中的变量
 
+    // 先对传入的特征点坐标四舍五入取整，基于这个坐标再去获取一个指向该像素的指针，注意不是对应的灰度值
+    // 把image前面的取地址符&去掉才是灰度值，这里center是一个uchar类型的指针，所以后面才能对它进行索引取值
     const uchar* center = &image.at<uchar> (cvRound(pt.y), cvRound(pt.x));
 
     // Treat the center line differently, v=0
@@ -104,28 +109,50 @@ static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 }
 
 
-const float factorPI = (float)(CV_PI/180.f);
+const float factorPI = (float)(CV_PI/180.f);    // 角度转成弧度制的系数
 static void computeOrbDescriptor(const KeyPoint& kpt,
                                  const Mat& img, const Point* pattern,
                                  uchar* desc)
+                                 // 传入的参数中带const的都是不会修改，只读的
+                                 // 另外这里看起来传入的是一个Point指针类型的pattern，但其实是一个数组，可以根据索引获取其它元素
 {
-    float angle = (float)kpt.angle*factorPI;
-    float a = (float)cos(angle), b = (float)sin(angle);
+    // 在特征提取的最后，会在computeOrientation函数中计算特征点的角度
+    float angle = (float)kpt.angle*factorPI;    // 将角度转换为弧度
+    float a = (float)cos(angle), b = (float)sin(angle); // 相关变量计算
 
+    // 和之前一样，这里获取的是一个指向特征点像素的uchar类型的指针，并非是特征点所对应像素的灰度值，需要注意
+    // 如果把img前面的取地址符&去掉，获取的就是该位置对应的灰度值了
+    // 换句话说是可以对center进行索引操作获取其它元素的值的，这在下面定义的宏中就有体现
     const uchar* center = &img.at<uchar>(cvRound(kpt.pt.y), cvRound(kpt.pt.x));
+    // 这里的step是Mat的属性之一，表示一个数据所占字节长度，方便后面迭代时候跳过指定步长
+    // 例如一个单通道灰度影像一个像素值在我这里字节长度是700,而RGB影像一个像素的长度是2100
     const int step = (int)img.step;
 
+    // 这里定义了一个宏，用于后续计算的方便
+    // 这里的center就是上面获取的uchar的指针，而pattern就是传入的参数
+    // 这里面一长串其实都是在计算索引，而对center取索引获取到的就是该索引(位置)所对应的灰度值
     #define GET_VALUE(idx) \
         center[cvRound(pattern[idx].x*b + pattern[idx].y*a)*step + \
                cvRound(pattern[idx].x*a - pattern[idx].y*b)]
 
-
+    // 前面定义的描述子有32列，对应这里的32次循环
+    // 注意这里的pattern指向的地址随着迭代也在变化，每次增加16
+    // 这16其实就是对应一次迭代读取pattern的步长，在一次迭代中，一共会获取16个元素，所以下一次迭代从16开始16
+    // 另外，根据这个算法，可以计算出一共要有32×16个点用于迭代，而在代码一开始的pattern中就是512个点，在类的构造函数初始化pattern的时候也有体现
     for (int i = 0; i < 32; ++i, pattern += 16)
     {
-        int t0, t1, val;
+        int t0, t1, val;    // 临时变量
+        // 获取0,1索引对应的像素的灰度值，然后进行比较，比较结果放到val里
         t0 = GET_VALUE(0); t1 = GET_VALUE(1);
-        val = t0 < t1;
-        t0 = GET_VALUE(2); t1 = GET_VALUE(3);
+        val = t0 < t1;  // true为1,false为0
+        t0 = GET_VALUE(2); t1 = GET_VALUE(3);   // 和上面一样
+        // |表示两个相应的二进制位中只要有一个为1，该位的结果值为1，否则为0
+        // 而这里又多了个等号，就类似于+=这种操作，表示按位或赋值，
+        // 将val与t0 < t1进行按位或运算，并将结果再赋给val
+        // <<用来将一个数的各二进制位全部左移N位，高位舍弃，低位补0
+        // 另外还需要注意的是这里的运算顺序
+        // 这里认为添加了括号，所以先运算括号里的内容，然后运算<<，最后运算后的结果再按位或赋值
+        // 这里之所以要左移1位是因为上面第一位已经有了内容，如果不左移的话，数据就被覆盖了
         val |= (t0 < t1) << 1;
         t0 = GET_VALUE(4); t1 = GET_VALUE(5);
         val |= (t0 < t1) << 2;
@@ -140,13 +167,23 @@ static void computeOrbDescriptor(const KeyPoint& kpt,
         t0 = GET_VALUE(14); t1 = GET_VALUE(15);
         val |= (t0 < t1) << 7;
 
+        // 每次比较都有一个0或1的结果，上面比较了8次，因此到这里val是8位的0、1二进制串
+        // 而且根据desc数据类型的定义，是8U，最大值为255，所以将8位的二进制串转成uchar类型不会有任何数据丢失问题
+        // 另外前面说了，desc可以看成是有32个元素的数组，因此直接基于索引就可以进行赋值
+        // 将二进制串转换为uchar类型的数值后就可以直接赋给desc[i]，就完成了一个描述子的一个数的计算
+        // 迭代32次就可以把整个描述子计算出来
         desc[i] = (uchar)val;
     }
 
+    // 结束定义的宏
     #undef GET_VALUE
 }
 
-
+// 对应论文中提供好的pattern，直接用即可
+// 注意一下存放的数据结构，一共1024个数，对应512个点
+// bit_pattern_31_本身是一个长度为1024的一维数组
+// 但经过构造函数中的指针类型转换，就使得pattern0对应的是一个512长度的Point类型的数组了
+// 最后将这个长度为512的Point类型的数组拷贝给vector成员变量pattern
 static int bit_pattern_31_[256*4] =
 {
     8,-3, 9,5/*mean (0), correlation (0)*/,
@@ -414,7 +451,7 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
 {
     // 所有ORB参数在构造函数中就对应赋给了各个成员变量，所以后续就可以直接用了
 
-    // mvScaleFactor和mvLevelSigma2是vector，根据传入的层数设置了它的长度
+    // mvScaleFactor和mvLevelSigma2是ORBextractor的成员变量vector，根据传入的层数设置了它的长度
     mvScaleFactor.resize(nlevels);
     mvLevelSigma2.resize(nlevels);
 
@@ -430,59 +467,81 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
     {
         // 用了两种方法计算，一种是上一层尺度乘以缩放因子，得到下一层尺度
         // 另一种是当前尺度缩放因子的平方
+        // 这里的scaleFactor是类的成员变量，在构造函数一开始就赋了初值
         mvScaleFactor[i]=mvScaleFactor[i-1]*scaleFactor;
         mvLevelSigma2[i]=mvScaleFactor[i]*mvScaleFactor[i];
-//        printf("scalefactor levelsigma2 %d %f %f\n",i,mvScaleFactor[i],mvLevelSigma2[i]);
     }
 
-    // 求取逆尺度
+    // 设置逆尺度列表长度
     mvInvScaleFactor.resize(nlevels);
     mvInvLevelSigma2.resize(nlevels);
+
     // 每一层的尺度和逆尺度相乘为1，所以这里直接用1除以已经算出来的尺度就好
     for(int i=0; i<nlevels; i++)
     {
+        // 和上面尺度信息是对应的
         mvInvScaleFactor[i]=1.0f/mvScaleFactor[i];
         mvInvLevelSigma2[i]=1.0f/mvLevelSigma2[i];
     }
 
-    for (int j = 0; j < mvScaleFactor.size(); ++j) {
-        printf("scale factor %d %f\n",j,mvScaleFactor[j]);
-    }
-    for (int k = 0; k < mvInvScaleFactor.size(); ++k) {
-        printf("inv scale factor %d %f\n",k,mvInvScaleFactor[k]);
-    }
-
+    // 类的public的vector成员变量，根据金字塔层数设置长度，每一项对应一层影像
     mvImagePyramid.resize(nlevels);
 
+    // 类的protected的vector成员变量，这里设置vector长度
     mnFeaturesPerLevel.resize(nlevels);
-    // 看懂是没问题，但为什么要这样算不太清楚。这里其实相当于是给后面迭代提供一个初值
+    // 这里其实相当于是给后面迭代提供一个初值
+    // scaleFactor是类的protected的成员变量，是金字塔的尺度缩放因子，由用户指定，在上面也有用到
+    // 这里求的factor其实是scaleFactor的反向
     float factor = 1.0f / scaleFactor;
+    // 详细推导见博客，等比数列求和公式
+    // 简单来说就是nfeatures并不是每一层的特征点数量，而是所有层特征点加一起的总数
+    // 而各个层之间的特征点数量又满足等比关系，因此可以求解一个第一层应该有多少特征
+    // 后面各层对应的数量按照等比数列公式就可以推出来
     float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
 
-    // 然后循环求解每个尺度所对应的特征点数量
+    // 在上面，我们已经求得了第一层应该有多少特征，因此这里以此为初值循环求解各层特征数量
     int sumFeatures = 0;
     for( int level = 0; level < nlevels-1; level++ )
     {
         // 由于factor是小于1的，所以nDesiredFeaturesPerScale会越来越小
         mnFeaturesPerLevel[level] = cvRound(nDesiredFeaturesPerScale);
         sumFeatures += mnFeaturesPerLevel[level];
+        // factor就是等比公式里的因子，因此把当前项再乘以factor系数就可以得到下一项
         nDesiredFeaturesPerScale *= factor;
-        printf("mnFeaturesPerLevel sumFeatures %f %d\n",nDesiredFeaturesPerScale,sumFeatures);
     }
-    // 最后一层提取的特征的个数等于目标点个数减去前面特征点的累积和
+    // 最后一层提取的特征的个数等于用户指定的总特征数量nfeatures减去前面各层特征点数量的累积和
+    // 这里你可能会有个疑问，既然前面都求出等比数列的推导公式了，最后一层为什么不直接算出来，而是要拿总数减去前面的。
+    // 这里的核心就在于for循环的cvRound函数，这是一个四舍五入取整函数
+    // 换句话说就是每次都会丢失一点点，多层累加起来以后是一个不太能忽视的数字
+    // 例如每层都丢0.9,8层总共就是7.2个
+    // 如果最后一层还是按照等比数列来算，最后总的特征数量肯定是小于用户指定的nfeatures
+    // 为了弥补这种丢失，采用这种相减的办法将之前一点点丢失的一次性补回来
     mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);
 
-    const int npoints = 512;
+    // 对成员变量pattern进行赋值操作
+    const int npoints = 512;    // 指定一共有512个点
+    // 构造一个Point类型的指针，这一步其实很重要，
+    // 将一个长度为1024的int类型的一维数组(bit_pattern_31_)变成了一个长度为512的Point类型的一维数组(pattern0)
+    // 程序会自动将两个数字组合在一起形成一个Point，例如
+    // 8,-3, 9,5
+    // 4,2, 7,-12
+    // 经过转换就是[8,-3],[9,5],[4,2],[7,-12]四个点，因此经过转换后的pattern0共有512个点
     const Point* pattern0 = (const Point*)bit_pattern_31_;
+    // copy()函数用于将一个序列（sequence）拷贝到一个容器（container）中去
+    // 第一个参数是待拷贝序列的首地址，第二个参数是待拷贝序列的最后一个元素的下一个地址，第三个参数是拷贝目标容器的首地址
     std::copy(pattern0, pattern0 + npoints, std::back_inserter(pattern));
 
     //This is for orientation
     // pre-compute the end of a row in a circular patch
+    // 类的vector成员变量，这里对它设置个长度
     umax.resize(HALF_PATCH_SIZE + 1);
 
+    // 这里cvFloor只会返回一个值给vmax，v，v0并没有赋初值
+    // 这里不要受python的影响以为cvFloor会返回三个值给它们
     int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);
     int vmin = cvCeil(HALF_PATCH_SIZE * sqrt(2.f) / 2);
     const double hp2 = HALF_PATCH_SIZE*HALF_PATCH_SIZE;
+    // v=0到vmax
     for (v = 0; v <= vmax; ++v)
         umax[v] = cvRound(sqrt(hp2 - v * v));
 
@@ -498,24 +557,38 @@ ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
 
 static void computeOrientation(const Mat& image, vector<KeyPoint>& keypoints, const vector<int>& umax)
 {
-    // 其实核心是IC_Angle函数
+    // 其实核心是IC_Angle函数，这里是用个循环调用了这个函数
     for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
          keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint)
     {
+        // OpenCV的KeyPoint有个angle属性(float)，当计算好方向后就直接赋给它
+        // angle属性用角度表示，范围是[0,360)，顺时针
         keypoint->angle = IC_Angle(image, keypoint->pt, umax);
     }
 }
 
 void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNode &n3, ExtractorNode &n4)
 {
+    // (右下-左下)/2，向上取整，得到该节点的一半宽度
+    // 同理再求得节点的一半高度
+    // 至于static_cast可以简单理解为强制类型转换，这里就是将结果转换为float类型
     const int halfX = ceil(static_cast<float>(UR.x-UL.x)/2);
     const int halfY = ceil(static_cast<float>(BR.y-UL.y)/2);
 
     //Define boundaries of childs
+    // 依次定义四个子节点
+    // 一堆节点边界相关的内容可以不用深究
+    // 需要注意一下的是4个节点的顺序问题，是按行排列的
+    // 1 2
+    // 3 4
+
     n1.UL = UL;
     n1.UR = cv::Point2i(UL.x+halfX,UL.y);
     n1.BL = cv::Point2i(UL.x,UL.y+halfY);
     n1.BR = cv::Point2i(UL.x+halfX,UL.y+halfY);
+    // 这里意思就是说给新的子节点用于存放特征点的vector成员变量保留了父节点特征点数量的长度
+    // 这里需要注意的是父节点的vKeys虽然没有显式传入，但因为是类的成员函数，所以可以直接调用
+    // 另外，由于传入的四个子节点是引用传递，因此在这里修改也就一改全改了，所以整个函数也没有显式的返回值
     n1.vKeys.reserve(vKeys.size());
 
     n2.UL = n1.UR;
@@ -537,9 +610,12 @@ void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNo
     n4.vKeys.reserve(vKeys.size());
 
     //Associate points to childs
+    // 这一步也非常好理解，上面将父节点拆分成了4个子节点，还设置了子节点特征vector的长度
+    // 这里就是依次遍历父节点的特征点vector，根据特征点坐标将它们分配到不同节点
     for(size_t i=0;i<vKeys.size();i++)
     {
         const cv::KeyPoint &kp = vKeys[i];
+        // 根据特征点坐标判断属于哪个子节点，这里先判断了x，再判断y
         if(kp.pt.x<n1.UR.x)
         {
             if(kp.pt.y<n1.BR.y)
@@ -553,6 +629,9 @@ void ExtractorNode::DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNo
             n4.vKeys.push_back(kp);
     }
 
+    // 各个子节点，如果只包含了一个特征点，bNoMore成员变量就设为true
+    // 换句话说就是当前节点只包含一个特征点了，就不要再往下继续分了
+    // bNoMore的作用就是指明当前节点是否还可以继续分割
     if(n1.vKeys.size()==1)
         n1.bNoMore = true;
     if(n2.vKeys.size()==1)
@@ -568,94 +647,157 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
                                        const int &maxX, const int &minY, const int &maxY, const int &N, const int &level)
 {
     // Compute how many initial nodes
+    // 前面说过了，static_cast理解为强制类型转换就好
+    // 求解X方向上初始节点的个数，至于为什么用dx/dy再四舍五入取整这样比较奇怪的方式计算X方向初始节点个数暂时不知道
     const int nIni = round(static_cast<float>(maxX-minX)/(maxY-minY));
-
+    // 根据上面获得的X方向上的节点个数求解初始节点的水平宽度
     const float hX = static_cast<float>(maxX-minX)/nIni;
 
+    // 新建一个ExtractorNode类型的list用于存放节点
+    // 这个list后面会频繁用到
     list<ExtractorNode> lNodes;
 
+    // 新建一个ExtractorNode指针类型的vector，
+    // 它里面存放的是每次循环向lNodes添加元素后其最后一个元素的地址
     vector<ExtractorNode*> vpIniNodes;
-    vpIniNodes.resize(nIni);
+    vpIniNodes.resize(nIni);    // 长度就设置为刚刚计算出来的个数
 
+    // 依次循环，构造节点放入vector中
+    // 执行完这个循环其实只是将图像进行了X方向上的节点划分
+    // 因为在循环中所有节点的四角点的Y坐标值都是对应相同的
     for(int i=0; i<nIni; i++)
     {
+        // 每次循环都新建一个临时变量ni，四角点坐标的计算比较简单，一看就懂
         ExtractorNode ni;
+        // 上面两个坐标，所以y方向都为0
         ni.UL = cv::Point2i(hX*static_cast<float>(i),0);
         ni.UR = cv::Point2i(hX*static_cast<float>(i+1),0);
+        // 下面两个坐标，所以y方向都为dy，也就是maxY-minY
         ni.BL = cv::Point2i(ni.UL.x,maxY-minY);
         ni.BR = cv::Point2i(ni.UR.x,maxY-minY);
+        // 设置节点的特征点vector长度为传入的vector的长度
+        // 不要忘记了这个传入的vToDistributeKeys是哪里来的
+        // 它里面是金字塔每一层提取的未经任何处理的原始特征点
         ni.vKeys.reserve(vToDistributeKeys.size());
 
-        lNodes.push_back(ni);
+        lNodes.push_back(ni);   // 将节点放入lNodes中
+        // back()返回lNodes的最后一个元素的可读写的引用，换句话说你可以直接利用lNodes.back()修改最后一个元素的值
+        // 但这里需要注意的是vpIniNodes是ExtractorNode指针型的vector，因此要在前面加个取地址符才可以
         vpIniNodes[i] = &lNodes.back();
     }
 
     //Associate points to childs
+    // 遍历所有特征点，按照X方向上的位置安放到对应的节点中去
     for(size_t i=0;i<vToDistributeKeys.size();i++)
     {
+        // 获得特征点
         const cv::KeyPoint &kp = vToDistributeKeys[i];
+        // 根据特征点x坐标和节点宽度计算得到其所对应的节点索引
+        // 再根据节点索引获得对应节点，利用->操作符获取节点对象内的public的vector成员变量
+        // 最后将该特征点push到这个vector中
         vpIniNodes[kp.pt.x/hX]->vKeys.push_back(kp);
     }
 
+    // 构造一个迭代器，指向lNodes的第一个元素，后面就不新建一直用这个了
     list<ExtractorNode>::iterator lit = lNodes.begin();
 
+    // 循环遍历节点，对于只含一个特征点和不含特征点的节点单独进行处理
     while(lit!=lNodes.end())
     {
+        // 如果当前节点只含一个特征点，那么就把当前节点的bNoMore设为true
+        // 也就是说指定当前节点不可以再继续分割了
         if(lit->vKeys.size()==1)
         {
             lit->bNoMore=true;
-            lit++;
+            lit++;  // 迭代器迭代到下一个
         }
+        // 如果说当前节点不含特征点，那么就直接把当前节点从lNodes中抹去
         else if(lit->vKeys.empty())
+            // erase()函数的用法需要注意一下
+            // 它的输入参数是指向需要抹去元素的迭代器
+            // 而它相比于remove()函数无返回值，它是有返回值的，
+            // 它的返回值就是指向下一个元素的迭代器
+            // 因此，在这个分支里就不再需要lit++了
             lit = lNodes.erase(lit);
+        // 如果当前节点既不为空也不仅包含一个特征点，那么就什么都不做，直接跳过
         else
             lit++;
     }
 
-    bool bFinish = false;
+    bool bFinish = false;   // 一个flag变量，用于指示分割是否完成，是否停止迭代
 
-    int iteration = 0;
+    int iteration = 0;  // 迭代次数
 
+    // 一个vector用于存放尺寸与指向该节点的指针，长度设置为当前节点总数的4倍
     vector<pair<int,ExtractorNode*> > vSizeAndPointerToNode;
     vSizeAndPointerToNode.reserve(lNodes.size()*4);
 
+    // 开始迭代！
     while(!bFinish)
     {
-        iteration++;
+        iteration++;    // 迭代次数累加1
 
-        int prevSize = lNodes.size();
+        int prevSize = lNodes.size();   // 当前节点总数，其是否变换会作为迭代终止的判断条件之一
 
-        lit = lNodes.begin();
+        lit = lNodes.begin();   // 把迭代器指向当前lNodes的第一个元素
 
-        int nToExpand = 0;
+        int nToExpand = 0;  // 累加变量，包含特征个数大于1的节点个数
 
-        vSizeAndPointerToNode.clear();
+        vSizeAndPointerToNode.clear();  // 清空
 
+        // 开始正式迭代、遍历lNodes中的节点
         while(lit!=lNodes.end())
         {
+            // 前面说过了，如果节点的bNoMore为true也就是说不可再分，那么直接跳过
+            // 但别忘了把迭代器加一下
             if(lit->bNoMore)
             {
                 // If node only contains one point do not subdivide and continue
                 lit++;
                 continue;
             }
+            // 如果当前节点的bNoMore为false，也就说明还可以继续分割，则进行下面的操作
             else
             {
                 // If more than one point, subdivide
+                // 新建四个临时节点变量，对应拆分的4个子节点
                 ExtractorNode n1,n2,n3,n4;
+                // 根据迭代器利用->操作符调用当前节点的成员函数DivideNode
+                // 由于函数参数是引用传递，因此它的输出值就是这四个子节点
+                // 这个函数做了哪些事情需要清楚，简单来说是三件事
+                // 1.根据父节点，对4个子节点的坐标范围进行了计算，4个子节点按照行优先顺序排列1 2;3 4
+                // 2.根据父节点特征点的x、y坐标，将各个特征点放到所属的子节点中
+                // 3.判断子节点是否为叶子节点(不可再分)，如果是，bNoMore设为True
+                // 最后需要说明的是这个函数并没有对父节点做任何操作，只是新建了4个覆盖父节点的子节点
+                // 因此需要在后续的操作中删除它们的父节点
                 lit->DivideNode(n1,n2,n3,n4);
 
                 // Add childs if they contain points
+                // 这里分别对拆分好的4个子节点依次进行了操作
+
+                // 如果子节点1中的特征点个数不为空，则执行下列操作
                 if(n1.vKeys.size()>0)
                 {
+                    // 将当前n1子节点添加到lNodes中
+                    // 注意push_front是将元素添加到序列的最前面，而push_back则是添加到末尾
+                    // 另外需要注意的是只有当节点包含的特征不为空时才会添加到lNodes
+                    // 换句话说就是lNodes中的每个节点都至少包含一个或以上的特征点
+                    // 若lNodes的长度等于期望特征数N，则实际提取到的特征点个数应该是大于等于N的
                     lNodes.push_front(n1);
+                    // 进一步判断，如果当前节点包含的特征点多于1的话，也就说非叶子节点，bNoMore为false，则执行下面操作
                     if(n1.vKeys.size()>1)
                     {
-                        nToExpand++;
+                        nToExpand++;    // 累加变量+1，只有当前节点包含特征点个数大于1才累加
+                        // 这里利用make_pair函数构造了一个pair放到了vSizeAndPointerToNode中
+                        // size就是当前节点的特征点个数，
+                        // 由于上面将当前节点放到了lNodes的最前面，所以当前节点就是lNodes的第一个元素
+                        // 由于定义的类型是ExtractorNode的指针，因此前面要加个取地址符
                         vSizeAndPointerToNode.push_back(make_pair(n1.vKeys.size(),&lNodes.front()));
+                        // 这里的操作是把指向lNodes的第一个元素(也就是当前节点)的迭代器赋给lNodes中第一个元素(当前节点)的lit成员变量(别忘了节点中是有个迭代器成员变量的)
                         lNodes.front().lit = lNodes.begin();
                     }
                 }
+                // 下面的n2,n3,n4都和上面的n1一样，这里就不再赘述了
                 if(n2.vKeys.size()>0)
                 {
                     lNodes.push_front(n2);
@@ -687,31 +829,52 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
                     }
                 }
 
+                // 如果还记得在前面lit->DivideNode那行注释说的话的话，这里就是把父节点删掉的操作
+                // erase函数在前面也介绍过了，不仅会删除当前元素，还会返回指向下一个元素的迭代器
+                // 所以这里也就不再需要手动累加了
                 lit=lNodes.erase(lit);
                 continue;
             }
         }
 
+        // 经过上面的操作，lNodes中的所有节点就都被遍历被迭代拆分了
+        // 但别忘了这是在另一个更大的while循环里，
+        // 直到目前为止我们并没有更改终止条件bFinish
+        // 下面就是是否终止迭代的一系列判断与操作
+
         // Finish if there are more nodes than required features
         // or all nodes contain just one point
+        // 如果lNodes中节点的个数大于期望提取的特征数量N(别忘了，这是函数传入的参数之一)
+        // 或者lNodes中节点的个数和上次迭代一样，也就是说拆分不动了
+        // 以上两种情况就停止迭代，bFinish设为true
         if((int)lNodes.size()>=N || (int)lNodes.size()==prevSize)
         {
             bFinish = true;
         }
+        // 而如果当前节点总数加上3倍nToExpand大于N，则执行下面操作
+        // 这里体现的就是nToExpand的作用，上面说了nToExpand表示的是经过迭代后包含特征点数量大于1的节点的个数
+        // 如果说当前节点总数加上3倍nToExpand大于N，则说明当前分割结果不够“干净”、“均匀”，还包含了大量特征多余1的节点
+        // 至于说为什么是3，暂时还不太清楚
         else if(((int)lNodes.size()+nToExpand*3)>N)
         {
-
+            // 如果进入到这里，目前bFinish还为false所以会继续执行下面的代码，这其实和上面的是类似的
             while(!bFinish)
             {
 
-                prevSize = lNodes.size();
+                prevSize = lNodes.size();   // 将当前的lNodes个数赋给prevSize
 
+                // 将当前的vSizeAndPointerToNode赋给vPrevSizeAndPointerToNode做个记录
                 vector<pair<int,ExtractorNode*> > vPrevSizeAndPointerToNode = vSizeAndPointerToNode;
-                vSizeAndPointerToNode.clear();
-
+                vSizeAndPointerToNode.clear();  // 然后清空当前vector
+                // 对vPrevSizeAndPointerToNode做了个排序，默认为升序
+                // 另外排序默认是按照pair的第一个元素进行，且排序直接修改原始数据，没有另外的返回值
+                // 这样排完以后vPrevSizeAndPointerToNode中的元素是按照节点所包含的特征点个数按照从小到大的顺序排序
+                // 越往后节点包含的特征点个数越多，换句话说就是越可以继续拆分，直到一个节点包含一个特征点
                 sort(vPrevSizeAndPointerToNode.begin(),vPrevSizeAndPointerToNode.end());
+                // for循环遍历其中的每个元素，从后往前，原因在上一行已经说了
                 for(int j=vPrevSizeAndPointerToNode.size()-1;j>=0;j--)
                 {
+                    // 循环里的操作其实和前面是一样的
                     ExtractorNode n1,n2,n3,n4;
                     vPrevSizeAndPointerToNode[j].second->DivideNode(n1,n2,n3,n4);
 
@@ -753,12 +916,15 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
                         }
                     }
 
+                    // 添加完子节点以后还是别忘了把父节点删掉
                     lNodes.erase(vPrevSizeAndPointerToNode[j].second->lit);
 
+                    // 如果当前节点个数大于期望值N，就直接结束for循环
                     if((int)lNodes.size()>=N)
                         break;
                 }
 
+                // 判断条件和前面一样，满足的话bFinish设为true
                 if((int)lNodes.size()>=N || (int)lNodes.size()==prevSize)
                     bFinish = true;
 
@@ -767,16 +933,27 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
     }
 
     // Retain the best point in each node
+    // 建立vector用于保存结果
     vector<cv::KeyPoint> vResultKeys;
     vResultKeys.reserve(nfeatures);
+    // 循环遍历每个节点
     for(list<ExtractorNode>::iterator lit=lNodes.begin(); lit!=lNodes.end(); lit++)
     {
+        // 获取到节点所包含的所有特征点
         vector<cv::KeyPoint> &vNodeKeys = lit->vKeys;
+        // 获取到vector的第一个元素
+        // 这里并不需要担心获取为空的问题，因为前面说了，能够加到lNodes的节点至少都包含了一个特征点
         cv::KeyPoint* pKP = &vNodeKeys[0];
+        // 先将这个特征点的相应值作为最大值
+        // 这里简单说一下response是OpenCV中KeyPoint的属性之一，
+        // 可以理解为这个值越高说明特征点的质量越好
         float maxResponse = pKP->response;
 
+        // 如果说当前节点包含多个特征点，
+        // 那就遍历所有特征点，找到最大响应值以及其对应的特征点
         for(size_t k=1;k<vNodeKeys.size();k++)
         {
+            // 响应值比较，比较好懂
             if(vNodeKeys[k].response>maxResponse)
             {
                 pKP = &vNodeKeys[k];
@@ -784,9 +961,13 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
             }
         }
 
+        // 最后将这个有最大响应值的特征点添加到vResultKeys中
         vResultKeys.push_back(*pKP);
     }
 
+    // 终于返回了
+    // 通过上面这个循环也可以看出，最后每个节点只选取一个特征点
+    // 所以提取的特征点数量和节点数量是相等的
     return vResultKeys;
 }
 
@@ -798,6 +979,7 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
     // 每一个小格网的大小，这里宽高都是30个像素
     const float W = 30;
 
+    // 对每一层循环进行特征点提取
     for (int level = 0; level < nlevels; ++level)
     {
         // 对于提取范围边界的一些计算
@@ -806,24 +988,28 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
         const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
         const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
 
+        // 每一层都临时新建个vector变量用于存放特征点
         vector<cv::KeyPoint> vToDistributeKeys;
         // reserve函数用于申请内存
         // 在需要对大量数据进行处理的时候就要使用reserve主动分配内存以提升程序执行效率
+        // 这里保留的是用户指定总特征个数的10倍的内存
         vToDistributeKeys.reserve(nfeatures*10);
 
         const float width = (maxBorderX-minBorderX);
         const float height = (maxBorderY-minBorderY);
 
-        const int nCols = width/W;  // 列数
-        const int nRows = height/W; // 行数
-        const int wCell = ceil(width/nCols);    // 向上取整
-        const int hCell = ceil(height/nRows);
+        const int nCols = width/W;  // 格网列数
+        const int nRows = height/W; // 格网行数
+        const int wCell = ceil(width/nCols);    // 每个格网的宽度，向上取整
+        const int hCell = ceil(height/nRows);   // 每个格网的高度
 
+        // 依照行列遍历每个格网进行处理
+        // 这一部分其实可以考虑用GPU进行并行加速，因为每个格网提取FAST角点的过程是各自独立的
         for(int i=0; i<nRows; i++)
         {
+            // 一系列格网坐标相关的判断与处理，不用过于深究
             const float iniY =minBorderY+i*hCell;
             float maxY = iniY+hCell+6;
-
             if(iniY>=maxBorderY-3)
                 continue;
             if(maxY>maxBorderY)
@@ -831,6 +1017,7 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
 
             for(int j=0; j<nCols; j++)
             {
+                // 一系列格网坐标相关的判断与处理，不用过于深究
                 const float iniX =minBorderX+j*wCell;
                 float maxX = iniX+wCell+6;
                 if(iniX>=maxBorderX-6)
@@ -838,25 +1025,31 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
                 if(maxX>maxBorderX)
                     maxX = maxBorderX;
 
+                // 每一个格网都会建一个临时的vector用于存放这个小格子里的特征点
                 vector<cv::KeyPoint> vKeysCell;
-                // 在每一小块内提取FAST角点(调用OpenCV的FAST函数)
-                // 要注意的是这里的阈值首先是iniThFAST，如果提取的角点为空，则只使用指定的小阈值
+                // 在每一小块内提取FAST角点(调用OpenCV的FAST函数)，就是上面求得的iniY,maxY,iniX,maxX
+                // 要注意的是这里的阈值首先是iniThFAST，这个阈值就是普通的FAST阈值的含义
+                // 也就是中心像素与周围一圈像素灰度值差异，小于这个值认为灰度相同，大于则认为不同
                 FAST(mvImagePyramid[level].rowRange(iniY,maxY).colRange(iniX,maxX),
                      vKeysCell,iniThFAST,true);
 
+                // 如果提取的角点为空，则使用指定的小阈值
                 if(vKeysCell.empty())
                 {
                     FAST(mvImagePyramid[level].rowRange(iniY,maxY).colRange(iniX,maxX),
                          vKeysCell,minThFAST,true);
                 }
 
-                // 对于每一小块，如果提取的特征点vector不为空就依次将其加入成员变量vToDistributeKeys
+                // 对于每一小块，如果提取的特征点vector不为空进行后续处理
                 if(!vKeysCell.empty())
                 {
+                    // 构造一个迭代器迭代小格网里的每个特征点
                     for(vector<cv::KeyPoint>::iterator vit=vKeysCell.begin(); vit!=vKeysCell.end();vit++)
                     {
+                        // 具体而言其实就是坐标转换，将特征点在小格网里的坐标转换到全图坐标
                         (*vit).pt.x+=j*wCell;
                         (*vit).pt.y+=i*hCell;
+                        // 并将提取到的特征点添加到每层金字塔对应的vToDistributeKeys中
                         vToDistributeKeys.push_back(*vit);
                     }
                 }
@@ -864,29 +1057,60 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
             }
         }
 
+        // allKeypoints是传入的变量，根据索引level获取到当前层对应的元素并赋给keypoints
+        // 这样我在后续修改keypoints的时候就直接把传入的变量都改了，因为是引用传递
         vector<KeyPoint> & keypoints = allKeypoints[level];
         keypoints.reserve(nfeatures);
 
+        // 其实仔细观察就会发现，到这里，每一层提取的特征点的数量我们是不知道或者说不能直接精准控制的
+        // 上面在提取FAST角点的时候，设置的是FAST角点的阈值，并不是特征点的个数
+        // 因此在这里，我们完全不知道vToDistributeKeys到底有多少特征点，有没有达到期望的数量
+        // 因此才有了下面的这个函数，这个函数主要有两个作用：
+        // 1.看提取的特征点是否达到预期，多退少补 2.尽可能均匀分布特征点
         // 利用八叉树对每一层提取的特征点进行过滤，使其均匀分布
+        // vToDistributeKeys 刚刚提取到的每一层未经处理的FAST角点
+        // minBorderX, maxBorderX, minBorderY, maxBorderY 坐标边界相关变量
+        // mnFeaturesPerLevel 类的成员变量，在构造函数里被赋值，根据用户指定的特征点数量计算得到的每一层应该提取的数量
         keypoints = DistributeOctTree(vToDistributeKeys, minBorderX, maxBorderX,
                                       minBorderY, maxBorderY,mnFeaturesPerLevel[level], level);
 
+        // 缩放后的每一块的大小
+        // 后面在计算FAST角点的方向的时候有用到PATCH_SIZE
+        // 因此这里的scaledPatchSize可以看作是特征点所代表的范围
         const int scaledPatchSize = PATCH_SIZE*mvScaleFactor[level];
 
         // Add border to coordinates and scale information
+        // 由于上面提取的特征点是不包括扩展的边界的，因此这里再手动加上边界
         const int nkps = keypoints.size();
         for(int i=0; i<nkps ; i++)
         {
+            // 其实就是相当于整体平移一下
             keypoints[i].pt.x+=minBorderX;
             keypoints[i].pt.y+=minBorderY;
+            // octave是OpenCV的KeyPoint类的属性之一，int类型，说明这个特征点是位于金字塔的哪一层
             keypoints[i].octave=level;
+            // size也是KeyPoint的属性之一，float类型，说明该特征点的有效范围(直径)
+            // FAST本身并没有严格意义上的有效范围概念(硬要说也有，就是中心点与周围比较像素构成的圆的直径)，但ORB用的是Oriented FAST，
+            // 在计算方向时有用到PATCH_SIZE，因此在这里就把计算方向的范围作为特征点的有效范围
+            // 根据上面的计算公式也知道，scaledPatchSize与PATCH_SIZE和不同层的缩放因子有关
+            // 在PATCH_SIZE一定的情况下(例如这里在代码一开始就设置为了30)只与缩放因子有关，每一层的特征点有效范围都一样
             keypoints[i].size = scaledPatchSize;
         }
+
+        // 经过上面的步骤，金字塔一层的特征点就提取完了
     }
 
+    // 经过上面的步骤，就完成了特征点的提取
+    // 但如果细心的话就会发现上面其实核心就是FAST，只不过用OctTree对其进行过滤了一下而已，以满足均匀分布
+    // ORB不是号称是Oriented FAST吗？这个Oriented到目前为止并没有体现出来
+    // 下面就是计算方向的代码，也是特征点提取的倒数第二步(最后一步是计算描述子)
     // compute orientations
     for (int level = 0; level < nlevels; ++level)
+        // 传入的参数是影像、对应特征点vector以及umax vector
+        // umax是类的protected vector成员变量，在构造函数里被赋值
         computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
+
+    // 至此特征提取就完成了，还差描述
 }
 
 void ORBextractor::ComputeKeyPointsOld(std::vector<std::vector<KeyPoint> > &allKeypoints)
@@ -1072,9 +1296,14 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                                const vector<Point>& pattern)
 {
     // 这里其实也是一层包装，核心函数是computeOrbDescriptor
+    // 这里相当于对传入的descriptors重新赋值，元素全部为0，
+    // 行数为特征点个数，列数为32(描述子长度)，元素数据类型为8位无符号整型(最大为255)
     descriptors = Mat::zeros((int)keypoints.size(), 32, CV_8UC1);
 
+    // 依次遍历每个特征点，计算描述子
     for (size_t i = 0; i < keypoints.size(); i++)
+        // 第一个参数是特征点，第二个参数是影像，第三个参数是Point对象，第四个参数就是待填充的描述子
+        // 注意一下传入的描述子的类型与大小，它其实是一个uchar类型的指针，可以根据索引获取到第i行的所有元素，因此可以说大小为1x32
         computeOrbDescriptor(keypoints[i], image, &pattern[0], descriptors.ptr((int)i));
 }
 
@@ -1090,49 +1319,78 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
     assert(image.type() == CV_8UC1 );
 
     // Pre-compute the scale pyramid
-    // 它的返回值是直接返回给了ORB提取对象的成员变量，所以这里看起来没有返回值
+    // 它的返回值是直接返回给了ORB提取对象的public成员变量mvImagePyramid，所以这里看起来没有返回值
+    // 这也是这种看起来很费劲觉得错综复杂的原因
+    // 他把很多返回值、变量以类的成员变量形式实现了共享，对读者而言在一定程度上“藏起来”了
     ComputePyramid(image);
 
+    // 注意，之所以是vector < vector<KeyPoint> >是因为有多层，每层又有多个特征，所以需要用两个vector嵌套
     vector < vector<KeyPoint> > allKeypoints;
+    // 表面上看起来只传给这个函数一个参数，但其实通过类成员变量的方式直接在函数内部获取到了相关数据
+    // 这里为了分布均匀，采用OctTree分割影像
     ComputeKeyPointsOctTree(allKeypoints);
     //ComputeKeyPointsOld(allKeypoints);
 
+    // 开始特征描述相关操作
     Mat descriptors;
 
+    // 先统计一下各层提取到的特征的总和
     int nkeypoints = 0;
     for (int level = 0; level < nlevels; ++level)
         nkeypoints += (int)allKeypoints[level].size();
+
+    // 如果一个特征都没提取到
     if( nkeypoints == 0 )
+        // 就把传入的_descriptors释放掉，不用描述了
         _descriptors.release();
     else
     {
+        // 否则的化就创建一个Mat用于描述
+        // 这个描述矩阵共有nkeypoints行，32列，元素数据类型为CV_8U
+        // 也就是说每个特征点由32个CV_8U的数字描述
         _descriptors.create(nkeypoints, 32, CV_8U);
+        // 将传入的描述矩阵先赋给新建的descriptors方便操作
         descriptors = _descriptors.getMat();
     }
 
+    // 先对传入的特征vector清空，防止出错
     _keypoints.clear();
-    _keypoints.reserve(nkeypoints);
+    _keypoints.reserve(nkeypoints); // 设置长度
 
+    // 描述子的偏移量，用于在迭代计算描述子时找到正确的位置
     int offset = 0;
+    // 按层数依次遍历特征点
     for (int level = 0; level < nlevels; ++level)
     {
+        // 根据索引获取每一层的特征点vector
         vector<KeyPoint>& keypoints = allKeypoints[level];
-        int nkeypointsLevel = (int)keypoints.size();
+        int nkeypointsLevel = (int)keypoints.size();    // 当前层特征点的数量
 
+        // 如果为0则直接跳过本次循环
         if(nkeypointsLevel==0)
             continue;
 
         // preprocess the resized image
+        // 先获取当前层对应的影像内容赋给workingMat方便后续处理
         Mat workingMat = mvImagePyramid[level].clone();
+        // 调用OpenCV的高斯模糊函数对影像进行模糊，第一个参数是输入，第二个参数是输出
+        // 第三个参数是高斯卷积核大小
+        // 第四、第五个参数是X、Y方向上的方差sigma
+        // 第六个参数是扩边方式
         GaussianBlur(workingMat, workingMat, Size(7, 7), 2, 2, BORDER_REFLECT_101);
 
         // Compute the descriptors
+        // 获取当前层所包含特征点数量的行数作为描述子待填充的Mat
         Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
+        // 传入影像、特征点、待填充的描述子以及pattern即可
+        // 这个pattern也是类的protected vector成员变量之一，在构造函数中被赋值
         computeDescriptors(workingMat, keypoints, desc, pattern);
 
+        // 将偏移量增加nkeypointsLevel
         offset += nkeypointsLevel;
 
         // Scale keypoint coordinates
+        // 如果不是金字塔的第一层(没有缩放)，就对特征点坐标乘上缩放因子
         if (level != 0)
         {
             float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
@@ -1141,19 +1399,30 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
                 keypoint->pt *= scale;
         }
         // And add the keypoints to the output
+        // 最后，将提取的特征点插入传入的参数_keypoints的尾部
+        // 但因为在上面已经先清空了_keypoints，所以这里其实是不存在其它特征点的
         _keypoints.insert(_keypoints.end(), keypoints.begin(), keypoints.end());
     }
+
+    // 至此，特征点提取与描述的所有内容就全部介绍完了！
 }
 
 void ORBextractor::ComputePyramid(cv::Mat image)
 {
 
+    // 这里的nlevels是成员变量，在构造函数里被初始化
     for (int level = 0; level < nlevels; ++level)
     {
+        // 这里获取的是vector成员变量mvInvScaleFactor的内容，也就是说里面的尺度因子都是小于1且慢慢变小的
+        // (用户指定的尺度因子大于1的情况下)
         float scale = mvInvScaleFactor[level];
+        // 根据尺度因子计算下一层的长宽尺寸
         Size sz(cvRound((float)image.cols*scale), cvRound((float)image.rows*scale));
+        // 由于还涉及到扩边的问题，所以对图像长宽都加上一定数值
         Size wholeSize(sz.width + EDGE_THRESHOLD*2, sz.height + EDGE_THRESHOLD*2);
+        // 新建两个Mat，temp类型和输入的image一致
         Mat temp(wholeSize, image.type()), masktemp;
+        // 取temp的一定范围内的影像内容放到vector里
         mvImagePyramid[level] = temp(Rect(EDGE_THRESHOLD, EDGE_THRESHOLD, sz.width, sz.height));
 
         // Compute the resized image
@@ -1168,11 +1437,11 @@ void ORBextractor::ComputePyramid(cv::Mat image)
         }
         else
         {
+            // 将image扩边，返回给temp，四个方向大小相同都为EDGE_THRESHOLD，方式是REFLECT_101
             copyMakeBorder(image, temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
                            BORDER_REFLECT_101);
         }
     }
-
 }
 
 } //namespace ORB_SLAM
