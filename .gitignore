@@ -21,6 +21,8 @@ Examples/Stereo/EuRoC_TimeStamps
 
 lib
 
+tests
+
 Thirdparty/DBoW2/CMakeLists.txt
 Thirdparty/DBoW2/LICENSE.txt
 Thirdparty/DBoW2/README.txt
