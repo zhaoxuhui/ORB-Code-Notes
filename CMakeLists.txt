@@ -67,8 +67,7 @@ add_library(${PROJECT_NAME} SHARED
         src/KeyFrameDatabase.cc
         src/Sim3Solver.cc
         src/Initializer.cc
-        src/Viewer.cc
-        src/MIXextractor.cpp learn/orb_extractor.cpp)
+        src/Viewer.cc)
 
 target_link_libraries(${PROJECT_NAME}
         ${OpenCV_LIBS}
@@ -111,10 +110,7 @@ add_executable(mono_euroc
         Examples/Monocular/mono_euroc.cc)
 target_link_libraries(mono_euroc ${PROJECT_NAME})
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/tests)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/learn)
 
-add_executable(mix_feature tests/mix_feature.cpp)
-target_link_libraries(mix_feature ${PROJECT_NAME})
-
-add_executable(orb_extractor learn/orb_extractor.cpp)
-target_link_libraries(orb_extractor ${PROJECT_NAME})
+add_executable(learn_orb_extractor learn/learn_orb_extractor.cpp)
+target_link_libraries(learn_orb_extractor ${PROJECT_NAME})
